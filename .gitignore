@@ -2,4 +2,5 @@ results/
 results/*
 **/__pycache__/
 *.pyc
+.DS_Store
 
