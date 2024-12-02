@@ -1,0 +1,38 @@
+# Environment Config
+environment:
+  name: "survival_game"
+  render_mode: "human"  # options: {"human", "rgb_array", None}
+  max_steps: 1000       # max steps per episode
+  size: 10              # size of the grid world
+  
+
+# Agent Config
+agent:
+  type: "dqn"           # options: {"dqn", "random"}
+  memory_size: 100000   # replay buffer size
+  batch_size: 32
+  gamma: 0.99
+  epsilon_start: 1.0    # initial exploration rate
+  epsilon_end: 0.01     # final exploration rate
+  epsilon_decay: 0.995  # exploration decay rate
+  learning_rate: 0.001
+  target_update: 10     # update target network every N episodes
+  hidden_sizes: [128, 64]
+
+# Training Config
+training:
+  max_episodes: 1000
+  num_episodes: 1000
+  eval_frequency: 100
+  eval_episodes: 10     # num of episodes for evaluation
+  save_frequency: 100   # save model every N episodes
+  log_frequency: 1      # log metrics every N episodes
+  patience: 50          # early stopping patience
+  checkpoint_dir: "results/checkpoints"
+  log_dir: "results/logs"
+
+# Evaluation Config
+evaluation:
+  num_episodes: 100
+  render: true
+  save_video: false
