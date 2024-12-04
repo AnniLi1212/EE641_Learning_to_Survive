@@ -72,6 +72,7 @@ class Visualizer:
             state, _ = env.reset()
             done = False
             truncated = False
+            episode_reward = 0
             
             while not (done or truncated):
                 frame = env.render()
@@ -80,7 +81,13 @@ class Visualizer:
                     frames.append(frame)
                 
                 action = agent.select_action(state, training=False)
-                state, _, done, truncated, _ = env.step(action)
+                next_state, reward, done, truncated, info = env.step(action)
+                episode_reward += reward
+                state = next_state
+            
+            print(f"\nEpisode summary:")
+            print(f"Total reward: {episode_reward}")
+            print(f"Number of frames: {len(frames)}")
             
             if frames:
                 height, width = frames[0].shape[:2]
@@ -92,8 +99,6 @@ class Visualizer:
                 out.release()
                 print(f"Episode video saved to: {save_path}")
 
-        except ImportError:
-            print("Warning: cv2 not found, skipping video creation")
         except Exception as e:
             print(f"Warning: Failed to create video: {str(e)}")
 

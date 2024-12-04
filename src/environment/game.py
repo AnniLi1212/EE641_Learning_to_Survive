@@ -93,34 +93,44 @@ class SurvivalGameEnv(gym.Env):
     # execute one time step within the environment
     def step(self, action):
         self.current_step += 1
+        old_pos = (self.agent_position[0], self.agent_position[1])
         
-        moves = [
-            (0, 0),   # stay
-            (-1, 0),  # up
-            (1, 0),   # down
-            (0, -1),  # left
-            (0, 1),   # right
-        ]
+        # execute action
+        if action == 1:  # up
+            new_pos = (max(0, self.agent_position[0] - 1), self.agent_position[1])
+        elif action == 2:  # down
+            new_pos = (min(self.size - 1, self.agent_position[0] + 1), self.agent_position[1])
+        elif action == 3:  # left
+            new_pos = (self.agent_position[0], max(0, self.agent_position[1] - 1))
+        elif action == 4:  # right
+            new_pos = (self.agent_position[0], min(self.size - 1, self.agent_position[1] + 1))
+        else:  # stay
+            new_pos = (self.agent_position[0], self.agent_position[1])
         
-        new_pos = (
-            self.agent_position[0] + moves[action][0],
-            self.agent_position[1] + moves[action][1]
-        )
+        # update grid
+        self.grid[old_pos] = 0  # clear old position
         
-        if self.grid[new_pos] != 1:
+        # check if not hitting a wall
+        if self.grid[new_pos[0]][new_pos[1]] != 1:
             self.agent_position = new_pos
             
             # food collection
             if self.grid[new_pos] == 2:
                 self.health = min(100, self.health + 20)
                 self.grid[new_pos] = 0
-                self._place_items(2, 1) # new food
+                self._place_items(2, 1)  # new food
                 
             # threat collision
             elif self.grid[new_pos] == 3:
                 self.health -= 30
                 self.grid[new_pos] = 0
                 self._place_items(3, 1)  # new threat
+        else:
+            # TODO: not select wall position? (with observation scope)
+            self.agent_position = old_pos  # stay at old position if hit wall
+        
+        # update agent position in grid
+        self.grid[self.agent_position] = 4
         
         # health decay
         self.health = max(0, self.health - 1)
