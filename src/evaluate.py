@@ -9,14 +9,8 @@ import matplotlib.pyplot as plt
 from tqdm import tqdm
 from src import SurvivalGameEnv, DQNAgent, RandomAgent
 import argparse
+from src.train import load_config
 
-# function to load yaml config
-def load_config(config_path):
-    with open(config_path, 'r') as f:
-        return yaml.safe_load(f)
-
-# function to create agent based on config
-# TODO: add more agent types
 def create_agent(config, env, model_path=None):
     agent_type = config['agent']['type']
     if agent_type == "dqn":
@@ -36,7 +30,6 @@ def create_agent(config, env, model_path=None):
         raise ValueError(f"Unknown agent type: {agent_type}")
     return agent
 
-# function to evaluate agent performance
 def evaluate_episode(env, agent, render=False):
     state, _ = env.reset()
     done = False
@@ -45,30 +38,43 @@ def evaluate_episode(env, agent, render=False):
     episode_length = 0
     actions = []
     states = []
+    healths = []
+    hungers = []
+    attack_levels = []
     
     while not (done or truncated):
         if render:
             env.render()
         
-        action = agent.select_action(state, training=False)
+        info = env.unwrapped._get_info()
+        action = agent.select_action(state, info=info, training=False)
         next_state, reward, done, truncated, info = env.step(action)
         
         episode_reward += reward
         episode_length += 1
         actions.append(int(action))
         states.append(state.copy())
+        healths.append(float(info['health']))
+        hungers.append(float(info['hunger']))
+        attack_levels.append(float(info['attack']))
         
         state = next_state
     
     return {
         'reward': float(episode_reward),
         'length': int(episode_length),
-        'final_health': float(info.get('health', 0.0)),
+        'final_health': float(info['health']),
+        'final_hunger': float(info['hunger']),
+        'attack_level': float(info['attack']),
         'actions': actions,
-        'states': states
+        'states': states,
+        'data': {
+            'health': healths,
+            'hunger': hungers,
+            'attack_level': attack_levels
+        }
     }
 
-# function to analyze and plot evaluation results
 def analyze_results(results, save_dir):
     rewards = [r['reward'] for r in results]
     lengths = [r['length'] for r in results]
@@ -77,7 +83,7 @@ def analyze_results(results, save_dir):
     plots_dir = os.path.join(save_dir, 'plots')
     os.makedirs(plots_dir, exist_ok=True)
     
-    # plot reward distribution
+    # reward distribution
     plt.figure(figsize=(10, 6))
     plt.hist(rewards, bins=20)
     plt.title('Distribution of Episode Rewards')
@@ -86,7 +92,7 @@ def analyze_results(results, save_dir):
     plt.savefig(os.path.join(plots_dir, 'reward_distribution.png'))
     plt.close()
     
-    # plot episode lengths
+    # episode lengths
     plt.figure(figsize=(10, 6))
     plt.hist(lengths, bins=20)
     plt.title('Distribution of Episode Lengths')
@@ -95,7 +101,7 @@ def analyze_results(results, save_dir):
     plt.savefig(os.path.join(plots_dir, 'length_distribution.png'))
     plt.close()
     
-    # plot average health over episodes
+    # average health over episodes
     plt.figure(figsize=(10, 6))
     plt.hist(healths, bins=20)
     plt.title('Distribution of Average Health')
@@ -128,20 +134,33 @@ def analyze_results(results, save_dir):
     
     return stats
 
-# function to evaluate a trained agent
+# evaluate a trained agent
 def evaluate(config_path, model_path, num_episodes=100, render=False, save_dir=None):
     config = load_config(config_path)
-    env = gym.make('SurvivalGame-v0', render_mode="human" if render else None)
+    grid_size = config['environment'].get('size', 16)
     
-    # create agent and load model
+    env = gym.make('SurvivalGame-v0', 
+                  render_mode="human" if render else None,
+                  size=grid_size,
+                  max_steps=config['environment'].get('max_steps', 1000),
+                  num_food=config['environment'].get('num_food', 10),
+                  num_threats=config['environment'].get('num_threats', 5),
+                  food_value_min=config['environment'].get('food_value_min', 10),
+                  food_value_max=config['environment'].get('food_value_max', 30),
+                  threat_attack_min=config['environment'].get('threat_attack_min', 20),
+                  threat_attack_max=config['environment'].get('threat_attack_max', 40),
+                  agent_attack_min=config['environment'].get('agent_attack_min', 30),
+                  agent_attack_max=config['environment'].get('agent_attack_max', 50),
+                  hungry_decay=config['environment'].get('hungry_decay', 2),
+                  observation_range=config['environment'].get('observation_range', 4),
+                  threat_perception_range=config['environment'].get('threat_perception_range', 2))
+    
     agent = create_agent(config, env, model_path)
-    
     if save_dir is None:
         timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
         save_dir = os.path.join("results/evaluation", f"eval_{timestamp}")
     os.makedirs(save_dir, exist_ok=True)
     
-    # evaluate episodes
     print(f"Evaluating agent for {num_episodes} episodes...")
     results = []
     rewards = []
@@ -155,7 +174,6 @@ def evaluate(config_path, model_path, num_episodes=100, render=False, save_dir=N
         lengths.append(episode_data['length'])
         healths.append(episode_data['final_health'])
     
-    # calculate statistics
     stats = {
         'reward': {
             'mean': float(np.mean(rewards)),
@@ -208,7 +226,7 @@ def evaluate(config_path, model_path, num_episodes=100, render=False, save_dir=N
     print(f"\nHealth Statistics:")
     print(f"  Mean: {stats['health']['mean']:.2f} ± {stats['health']['std']:.2f}")
     print(f"  Range: [{stats['health']['min']:.2f}, {stats['health']['max']:.2f}]")
-    print(f"\nResults saved to: {save_dir}")
+    print(f"\nEval results saved to: {save_dir}")
     
     env.close()
     return stats

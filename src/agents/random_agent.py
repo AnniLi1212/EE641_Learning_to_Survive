@@ -1,7 +1,8 @@
-from .base_agent import BaseAgent
-
 # random agent
-class RandomAgent(BaseAgent):
+class RandomAgent:
+    def __init__(self, state_shape, action_space, config=None):
+        self.action_space = action_space
+    
     def select_action(self, state, training=True):
         return self.action_space.sample()
     

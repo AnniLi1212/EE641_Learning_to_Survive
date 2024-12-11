@@ -1,17 +1,15 @@
-#!/bin/bash
 set -e
-mkdir -p results/logs results/checkpoints results/evaluation results/visualization
+mkdir -p results/logs results/checkpoints results/evaluation
 
-# experiment ID
 TIMESTAMP=$(date +%Y%m%d_%H%M%S)
 EXPERIMENT_NAME="experiment_${TIMESTAMP}"
+
 AGENT_TYPE="dqn"
 RUN_NAME="${AGENT_TYPE}_${TIMESTAMP}"
 
-MODE="train"  # default mode
+MODE="train"
 CHECKPOINT=""
 
-# parse command line arguments
 while [[ $# -gt 0 ]]; do
     case $1 in
         --evaluate)
@@ -44,10 +42,9 @@ if [ "$MODE" = "evaluate" ]; then
 fi
 
 mkdir -p "results/evaluation/${EXPERIMENT_NAME}"
-mkdir -p "results/visualization/vis_${TIMESTAMP}"
 
+# train
 if [ "$MODE" = "train" ]; then
-    # training mode
     echo "Starting training..."
     mkdir -p "results/logs/${RUN_NAME}"
     mkdir -p "results/checkpoints/${RUN_NAME}"
@@ -58,18 +55,18 @@ if [ "$MODE" = "train" ]; then
 
     BEST_MODEL="results/checkpoints/${RUN_NAME}/best_model.pth"
 else
-    # evaluation mode
     BEST_MODEL="$CHECKPOINT"
 fi
 
 echo "Using model at: ${BEST_MODEL}"
 
-# evaluation
+# evaluate
 echo "Starting evaluation..."
+NUM_EPISODES=$(python -c "import yaml; print(yaml.safe_load(open('configs/default_config.yaml'))['evaluation']['num_episodes'])")
 python -m src.evaluate \
     --config configs/default_config.yaml \
     --model "${BEST_MODEL}" \
-    --episodes 100 \
+    --episodes ${NUM_EPISODES} \
     --save-dir "results/evaluation/${EXPERIMENT_NAME}" || { echo "Evaluation failed"; exit 1; }
 
 # visualization
@@ -79,30 +76,31 @@ if [ "$MODE" = "train" ]; then
     python -m src.visualize \
         --tensorboard-dir "${LOGS_DIR}" \
         --eval-results "results/evaluation/${EXPERIMENT_NAME}/evaluation_results.json" \
-        --model "${BEST_MODEL}" || { echo "Visualization failed"; exit 1; }
+        --model "${BEST_MODEL}" \
+        --save-dir "results/evaluation/${EXPERIMENT_NAME}" \
+        --timestamp "${TIMESTAMP}" || { echo "Visualization failed"; exit 1; }
 else
     LOGS_DIR=$(dirname $(dirname "$CHECKPOINT"))/logs/$(basename $(dirname "$CHECKPOINT"))
     if [ -d "$LOGS_DIR" ]; then
         python -m src.visualize \
             --tensorboard-dir "${LOGS_DIR}" \
             --eval-results "results/evaluation/${EXPERIMENT_NAME}/evaluation_results.json" \
-            --model "${BEST_MODEL}" || { echo "Visualization failed"; exit 1; }
+            --model "${BEST_MODEL}" \
+            --save-dir "results/evaluation/${EXPERIMENT_NAME}" \
+            --timestamp "${TIMESTAMP}" || { echo "Visualization failed"; exit 1; }
     else
         python -m src.visualize \
             --eval-results "results/evaluation/${EXPERIMENT_NAME}/evaluation_results.json" \
-            --model "${BEST_MODEL}" || { echo "Visualization failed"; exit 1; }
+            --model "${BEST_MODEL}" \
+            --save-dir "results/evaluation/${EXPERIMENT_NAME}" \
+            --timestamp "${TIMESTAMP}" || { echo "Visualization failed"; exit 1; }
     fi
 fi
 
 echo "Process completed!"
-echo "Results can be found in:"
-echo "- Evaluation: results/evaluation/${EXPERIMENT_NAME}"
-echo "- Visualizations: results/visualization/vis_${TIMESTAMP}"
 if [ "$MODE" = "train" ]; then
     echo "- Logs: ${LOGS_DIR}"
     echo "- Models: results/checkpoints/${RUN_NAME}"
     echo "To view training curves, run:"
     echo "tensorboard --logdir ${LOGS_DIR}"
 fi
-
-# ./run.sh --evaluate --checkpoint results/checkpoints/dqn_20241202_114654/best_model.pth

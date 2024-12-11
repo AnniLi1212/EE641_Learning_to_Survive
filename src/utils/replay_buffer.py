@@ -9,25 +9,24 @@ class ReplayBuffer:
         self.buffer = deque(maxlen=capacity)
     
     # add a transition to the buffer
-    def push(self, state, action, reward, next_state, done):
-        self.buffer.append((state, action, reward, next_state, done))
+    def push(self, state, action, reward, next_state, done, additional_state, next_additional_state):
+        self.buffer.append((state, action, reward, next_state, done, 
+                          additional_state, next_additional_state))
     
     # sample a batch of transitions
     def sample(self, batch_size, device):
         batch = random.sample(self.buffer, batch_size)
-        states, actions, rewards, next_states, dones = zip(*batch)
+        states, actions, rewards, next_states, dones, add_states, next_add_states = zip(*batch)
         
-        states = np.array(states)
-        next_states = np.array(next_states)
-        
-        states = torch.FloatTensor(states).to(device)
+        states = torch.FloatTensor(np.array(states)).to(device)
         actions = torch.LongTensor(actions).to(device)
         rewards = torch.FloatTensor(rewards).to(device)
-        next_states = torch.FloatTensor(next_states).to(device)
+        next_states = torch.FloatTensor(np.array(next_states)).to(device)
         dones = torch.FloatTensor(dones).to(device)
+        add_states = torch.FloatTensor(add_states).to(device)
+        next_add_states = torch.FloatTensor(next_add_states).to(device)
         
-        return states, actions, rewards, next_states, dones
+        return states, actions, rewards, next_states, dones, add_states, next_add_states
     
-    # get the number of transitions in the buffer
     def __len__(self):
         return len(self.buffer)

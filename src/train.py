@@ -8,12 +8,10 @@ from torch.utils.tensorboard import SummaryWriter
 from src import SurvivalGameEnv, DQNAgent, RandomAgent
 import argparse
 
-# function to load yaml config
 def load_config(config_path="configs/default_config.yaml"):
     with open(config_path, 'r') as f:
         return yaml.safe_load(f)
 
-# function to setup results logging
 def setup_logging(config, run_name=None):
     if run_name is None:
         timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
@@ -29,8 +27,7 @@ def setup_logging(config, run_name=None):
     
     return log_dir, checkpoint_dir, SummaryWriter(log_dir)
 
-# function to create agent based on config
-# TODO: add more agent types
+# create agent based on config
 def create_agent(config, env):
     agent_type = config['agent']['type']
     if agent_type == "dqn":
@@ -47,73 +44,106 @@ def create_agent(config, env):
     else:
         raise ValueError(f"Unknown agent type: {agent_type}")
 
-# function to evaluate agent performance
+# evaluate agent performance
 def evaluate_agent(env, agent, num_episodes=10):
     total_rewards = []
     episode_lengths = []
     
     for _ in range(num_episodes):
-        state, _ = env.reset()
+        state, info = env.reset()[0], env.unwrapped._get_info()
         done = False
         truncated = False
         episode_reward = 0
         episode_length = 0
         
         while not (done or truncated):
-            action = agent.select_action(state, training=False)
-            next_state, reward, done, truncated, _ = env.step(action)
+            action = agent.select_action(state, info=info, training=False)
+            next_state, reward, done, truncated, next_info = env.step(action)
             episode_reward += reward
             episode_length += 1
             state = next_state
-        
+            info = env.unwrapped._get_info()
+
         total_rewards.append(episode_reward)
         episode_lengths.append(episode_length)
     
     return np.mean(total_rewards), np.mean(episode_lengths)
 
-# main training function
 def train(config_path, run_name=None):
     config = load_config(config_path)
-    # setup environment with config values
     env = gym.make('SurvivalGame-v0',
                   render_mode=config['environment'].get('render_mode', None),
                   max_steps=config['environment'].get('max_steps', 1000),
-                  size=config['environment'].get('size', 10))
+                  size=config['environment'].get('size', 16),
+                  num_food=config['environment'].get('num_food', 10),
+                  num_threats=config['environment'].get('num_threats', 5),
+                  food_value_min=config['environment'].get('food_value_min', 10),
+                  food_value_max=config['environment'].get('food_value_max', 30),
+                  threat_attack_min=config['environment'].get('threat_attack_min', 20),
+                  threat_attack_max=config['environment'].get('threat_attack_max', 40),
+                  agent_attack_min=config['environment'].get('agent_attack_min', 30),
+                  agent_attack_max=config['environment'].get('agent_attack_max', 50),
+                  hungry_decay=config['environment'].get('hungry_decay', 2),
+                  observation_range=config['environment'].get('observation_range', 4),
+                  threat_perception_range=config['environment'].get('threat_perception_range', 2))
     
     eval_env = gym.make('SurvivalGame-v0',
                        render_mode=config['environment'].get('render_mode', None),
                        max_steps=config['environment'].get('max_steps', 1000),
-                       size=config['environment'].get('size', 10))
+                       size=config['environment'].get('size', 16),
+                       num_food=config['environment'].get('num_food', 10),
+                       num_threats=config['environment'].get('num_threats', 5),
+                       food_value_min=config['environment'].get('food_value_min', 10),
+                       food_value_max=config['environment'].get('food_value_max', 30),
+                       threat_attack_min=config['environment'].get('threat_attack_min', 20),
+                       threat_attack_max=config['environment'].get('threat_attack_max', 40),
+                       agent_attack_min=config['environment'].get('agent_attack_min', 30),
+                       agent_attack_max=config['environment'].get('agent_attack_max', 50),
+                       hungry_decay=config['environment'].get('hungry_decay', 2),
+                       observation_range=config['environment'].get('observation_range', 4),
+                       threat_perception_range=config['environment'].get('threat_perception_range', 2))
     
-    # create agent
     agent = create_agent(config, env)
-    
-    # setup logging
     log_dir, checkpoint_dir, writer = setup_logging(config, run_name)
     
     # training loop
     episode = 0
     best_eval_reward = float('-inf')
     no_improvement_count = 0
+    total_loss = 0
+    num_losses = 0
     
     while episode < config['training']['max_episodes']:
-        state, _ = env.reset()
+        state, info = env.reset()[0], env.unwrapped._get_info()
         done = False
         truncated = False
         episode_reward = 0
         
         while not (done or truncated):
-            action = agent.select_action(state)
-            next_state, reward, done, truncated, _ = env.step(action)
+            action = agent.select_action(state, info=info)
+            next_state, reward, done, truncated, next_info = env.step(action)
             episode_reward += reward
             
-            loss = agent.train(state, action, reward, next_state, done)
-            state = next_state
+            info = env.unwrapped._get_info()
+            next_info = env.unwrapped._get_info()
+
+            loss = agent.train(state, action, reward, next_state, done, info, next_info)
             
+            writer.add_scalar('Train/Health', info['health'], episode)
+
             if loss is not None:
-                writer.add_scalar('Train/Loss', loss, episode)
+                total_loss += loss
+                num_losses += 1
+            
+            state = next_state
+            info = next_info
         
         writer.add_scalar('Train/Episode_Reward', episode_reward, episode)
+        if num_losses > 0:
+            avg_loss = total_loss / num_losses
+            writer.add_scalar('Train/Average_Loss', avg_loss, episode)
+            total_loss = 0
+            num_losses = 0
         
         if episode % config['training']['eval_frequency'] == 0:
             eval_reward, eval_length = evaluate_agent(eval_env, agent, 

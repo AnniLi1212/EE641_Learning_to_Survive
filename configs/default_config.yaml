@@ -1,37 +1,43 @@
-# Environment Config
 environment:
   name: "survival_game"
-  render_mode: "human"  # options: {"human", "rgb_array", None}
-  max_steps: 1000       # max steps per episode
-  size: 10              # size of the grid world
-  
+  render_mode: "human"
+  max_steps: 1000 # max steps per episode
+  size: 16 # grid size
+  num_food: 10
+  num_threats: 5
+  food_value_min: 10
+  food_value_max: 30
+  threat_attack_min: 20
+  threat_attack_max: 40
+  agent_attack_min: 30
+  agent_attack_max: 50
+  hungry_decay: 2
+  observation_range: 4
+  threat_perception_range: 2
 
-# Agent Config
 agent:
-  type: "dqn"           # options: {"dqn", "random"}
-  memory_size: 100000   # replay buffer size
-  batch_size: 32
+  type: "dqn" # "dqn", "random"
+  memory_size: 100000 # replay buffer size
+  batch_size: 128
   gamma: 0.99
-  epsilon_start: 1.0    # initial exploration rate
-  epsilon_end: 0.01     # final exploration rate
-  epsilon_decay: 0.995  # exploration decay rate
-  learning_rate: 0.001
-  target_update: 10     # update target network every N episodes
-  hidden_sizes: [128, 64]
+  epsilon_start: 1.0
+  epsilon_end: 0.05
+  epsilon_decay: 0.997
+  learning_rate: 0.0003
+  target_update: 10 # update target network every x episodes
+  hidden_sizes: [256, 128]
 
-# Training Config
 training:
   max_episodes: 1000
   num_episodes: 1000
   eval_frequency: 100
-  eval_episodes: 10     # num of episodes for evaluation
-  save_frequency: 100   # save model every N episodes
-  log_frequency: 1      # log metrics every N episodes
-  patience: 50          # early stopping patience
+  eval_episodes: 10 # num of episodes for eval
+  save_frequency: 10
+  log_frequency: 1
+  patience: 50 # early stopping
   checkpoint_dir: "results/checkpoints"
   log_dir: "results/logs"
 
-# Evaluation Config
 evaluation:
   num_episodes: 100
   render: true

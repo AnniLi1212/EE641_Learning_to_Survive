@@ -13,10 +13,7 @@ from PIL import Image
 import yaml 
 
 class Visualizer:
-    def __init__(self, save_dir=None):
-        if save_dir is None:
-            timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-            save_dir = os.path.join("results/visualization", f"vis_{timestamp}")
+    def __init__(self, save_dir):
         self.save_dir = save_dir
         os.makedirs(self.save_dir, exist_ok=True)
 
@@ -69,54 +66,78 @@ class Visualizer:
         try:
             import cv2
             frames = []
-            state, _ = env.reset()
+            state, info = env.reset()
             done = False
             truncated = False
-            episode_reward = 0
+            total_reward = 0
             
             while not (done or truncated):
-                frame = env.render()
-                if frame is not None:
-                    frame = cv2.cvtColor(frame, cv2.COLOR_RGB2BGR)
-                    frames.append(frame)
-                
-                action = agent.select_action(state, training=False)
-                next_state, reward, done, truncated, info = env.step(action)
-                episode_reward += reward
-                state = next_state
-            
-            print(f"\nEpisode summary:")
-            print(f"Total reward: {episode_reward}")
-            print(f"Number of frames: {len(frames)}")
+                try:
+                    frame = env.render()
+                    if frame is not None:
+                        frame = cv2.cvtColor(frame, cv2.COLOR_RGB2BGR)
+                        font = cv2.FONT_HERSHEY_SIMPLEX
+                        cv2.putText(frame, f'Health: {info["health"]:.1f}', 
+                                (10, 20), font, 0.5, (0, 0, 0), 1)
+                        cv2.putText(frame, f'Hunger: {info["hunger"]:.1f}', 
+                                (10, 40), font, 0.5, (0, 0, 0), 1)
+                        cv2.putText(frame, f'Attack: {info["attack"]:.1f}', 
+                                (10, 60), font, 0.5, (0, 0, 0), 1)
+                        cv2.putText(frame, f'Reward: {total_reward:.1f}', 
+                                (10, 80), font, 0.5, (0, 0, 0), 1)
+                    
+                        frames.append(frame)
+                    
+                    if info is None:
+                        info = env.unwrapped._get_info()
+
+                    action = agent.select_action(state, info=info, training=False)
+                    next_state, reward, done, truncated, next_info = env.step(action)
+                    total_reward += reward
+                    
+                    state = next_state
+                    info = next_info
+                except Exception as e:
+                    print(f"Warning: Error during episode recording: {str(e)}")
+                    break
             
             if frames:
-                height, width = frames[0].shape[:2]
+                height, width, _ = frames[0].shape
                 fourcc = cv2.VideoWriter_fourcc(*'mp4v')
-                out = cv2.VideoWriter(save_path, fourcc, 30.0, (width, height))
+                out = cv2.VideoWriter(save_path, fourcc, 5.0, (width, height))
                 
                 for frame in frames:
                     out.write(frame)
+                
                 out.release()
-                print(f"Episode video saved to: {save_path}")
+                print(f"Video saved to: {save_path}")
+            
+            else:
+                print("Warning: No frames were captured")
 
         except Exception as e:
             print(f"Warning: Failed to create video: {str(e)}")
+            if 'out' in locals():
+                out.release()
 
     def visualize_value_function(self, agent, save_path):
-        grid_size = 10
-        states = np.zeros((grid_size * grid_size, grid_size, grid_size))
-        
+        grid_size = agent.state_shape[0]
+        states = np.zeros((grid_size * grid_size, *agent.state_shape))
         for i in range(grid_size):
             for j in range(grid_size):
-                states[i * grid_size + j, i, j] = 1
+                idx = i * grid_size + j
+                states[idx, i, j] = 4
         
-        states_tensor = torch.FloatTensor(states).to(agent.device)
+        states_tensor = torch.from_numpy(states).float().to(agent.device)
+        additional_state = torch.ones(len(states), 3).to(agent.device)
         
         with torch.no_grad():
-            values = agent.policy_net(states_tensor).max(1)[0].cpu().numpy()
+            values = agent.policy_net(states_tensor, additional_state).max(1)[0].cpu().numpy()
         
-        plt.figure(figsize=(10, 10))
         value_grid = values.reshape((grid_size, grid_size))
+        
+        # heatmap
+        plt.figure(figsize=(10, 8))
         sns.heatmap(value_grid, cmap='viridis')
         plt.title('State Value Function')
         plt.xlabel('X Position')
@@ -125,7 +146,6 @@ class Visualizer:
         plt.tight_layout()
         plt.savefig(save_path)
         plt.close()
-
 
     def plot_action_distribution(self, eval_results_path):
         with open(eval_results_path, 'r') as f:
@@ -153,20 +173,25 @@ class Visualizer:
         with open(eval_results_path, 'r') as f:
             results = json.load(f)
         
+        grid_size = results['config']['environment'].get('size', 16)
+    
         positions = []
         for episode in results['results']:
             for state in episode['states']:
-                # assuming state contains agent position information
-                # might need to modify this based on your state representation
-                agent_pos = np.array(state).argmax()  # agent position from one-hot encoded state
-                x, y = agent_pos // 10, agent_pos % 10  # assuming 10x10 grid
-                positions.append((x, y))
+                state_array = np.array(state)
+                agent_pos = np.where(state_array == 4)
+                if len(agent_pos[0]) > 0:
+                    x, y = agent_pos[0][0], agent_pos[1][0]
+                    positions.append((x, y))
         
         plt.figure(figsize=(10, 10))
-        position_counts = np.zeros((10, 10))  # assuming 10x10 grid
+        position_counts = np.zeros((grid_size, grid_size))
         for x, y in positions:
             position_counts[x, y] += 1
         
+        if position_counts.max() > 0:
+            position_counts = position_counts / position_counts.max()
+    
         sns.heatmap(position_counts, cmap='YlOrRd')
         plt.title('Agent Position Heatmap')
         plt.xlabel('X Position')
@@ -177,9 +202,20 @@ class Visualizer:
         plt.close()
 
 
-def main(tensorboard_log_dir=None, eval_results_path=None, model_path=None):
-    visualizer = Visualizer()
+def main(tensorboard_log_dir, eval_results_path, model_path, save_dir=None, timestamp=None):
+    if eval_results_path and os.path.exists(eval_results_path):
+        with open(eval_results_path, 'r') as f:
+            eval_data = json.load(f)
+            config = eval_data['config']
+    else:
+        print("Warning: No evaluation results found, using default config")
+        config = {'environment': {}, 'agent': {}}
+    if save_dir is None and timestamp is not None:
+        save_dir = os.path.join("results/evaluation", f"experiment_{timestamp}")
     
+    visualizer = Visualizer(save_dir)
+    grid_size = config['environment'].get('size', 16)
+
     if tensorboard_log_dir and os.path.exists(tensorboard_log_dir):
         print("Plotting training curves...")
         visualizer.plot_training_curves(tensorboard_log_dir)
@@ -195,15 +231,21 @@ def main(tensorboard_log_dir=None, eval_results_path=None, model_path=None):
     
     if model_path and os.path.exists(model_path):
         print("Creating episode video...")
-        env = gym.make('SurvivalGame-v0', render_mode='rgb_array')
-        
-        config_path = os.path.join(os.path.dirname(model_path), '..', '..', 'logs', 
-                                 os.path.basename(os.path.dirname(model_path)), 'config.yaml')
-        if os.path.exists(config_path):
-            with open(config_path, 'r') as f:
-                config = yaml.safe_load(f)
-        else:
-            config = {'agent': {'type': 'dqn'}}
+        env = gym.make('SurvivalGame-v0', 
+                      render_mode='rgb_array',
+                      size=grid_size,
+                      max_steps=config['environment'].get('max_steps', 1000),
+                      num_food=config['environment'].get('num_food', 10),
+                      num_threats=config['environment'].get('num_threats', 5),
+                      food_value_min=config['environment'].get('food_value_min', 10),
+                      food_value_max=config['environment'].get('food_value_max', 30),
+                      threat_attack_min=config['environment'].get('threat_attack_min', 20),
+                      threat_attack_max=config['environment'].get('threat_attack_max', 40),
+                      agent_attack_min=config['environment'].get('agent_attack_min', 30),
+                      agent_attack_max=config['environment'].get('agent_attack_max', 50),
+                      hungry_decay=config['environment'].get('hungry_decay', 2),
+                      observation_range=config['environment'].get('observation_range', 4),
+                      threat_perception_range=config['environment'].get('threat_perception_range', 2))
         
         agent = DQNAgent(
             state_shape=env.observation_space.shape,
@@ -211,7 +253,7 @@ def main(tensorboard_log_dir=None, eval_results_path=None, model_path=None):
             config=config['agent']
         )
         agent.load(model_path)
-        
+
         video_path = os.path.join(visualizer.save_dir, 'episode.mp4')
         visualizer.create_episode_video(env, agent, video_path)
         
@@ -232,6 +274,10 @@ if __name__ == "__main__":
                       help='Path to evaluation results JSON file')
     parser.add_argument('--model', type=str, default=None,
                       help='Path to model file for episode video creation')
+    parser.add_argument('--save-dir', type=str, default=None,
+                      help='Directory to save visualization results')
+    parser.add_argument('--timestamp', type=str, default=None,
+                      help='Timestamp for consistent directory naming')
     args = parser.parse_args()
     
-    main(args.tensorboard_dir, args.eval_results, args.model)
+    main(args.tensorboard_dir, args.eval_results, args.model, args.save_dir, args.timestamp)
