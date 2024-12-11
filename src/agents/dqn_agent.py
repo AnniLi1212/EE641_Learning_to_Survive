@@ -10,7 +10,7 @@ class DQNNetwork(nn.Module):
     def __init__(self, input_shape, num_actions, hidden_sizes=[256, 128]):
         super().__init__()
         # use conv to process input with 3 channels:
-        # grid info (0,1,2,3,4), food value, threat attack
+        # grid info (0,1,2,3,4,5), food value, threat attack
         self.conv1 = nn.Conv2d(input_shape[0], 16, kernel_size=3, padding=1)
         self.conv2 = nn.Conv2d(16, 32, kernel_size=3, padding=1)
         

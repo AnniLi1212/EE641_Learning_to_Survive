@@ -1,7 +1,7 @@
 environment:
   name: "survival_game"
   render_mode: "human"
-  max_steps: 1000 # max steps per episode
+  max_steps: 100 # max steps per episode
   size: 16 # grid size
   num_food: 10
   num_threats: 5
@@ -14,6 +14,8 @@ environment:
   hungry_decay: 2
   observation_range: 4
   threat_perception_range: 2
+  num_caves: 2
+  cave_health_recovery: 8
 
 agent:
   type: "dqn" # "dqn", "random"
@@ -28,9 +30,9 @@ agent:
   hidden_sizes: [256, 128]
 
 training:
-  max_episodes: 1000
-  num_episodes: 1000
-  eval_frequency: 100
+  max_episodes: 100
+  num_episodes: 100
+  eval_frequency: 10
   eval_episodes: 10 # num of episodes for eval
   save_frequency: 10
   log_frequency: 1
@@ -39,6 +41,6 @@ training:
   log_dir: "results/logs"
 
 evaluation:
-  num_episodes: 100
+  num_episodes: 10
   render: true
   save_video: false

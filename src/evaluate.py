@@ -153,7 +153,9 @@ def evaluate(config_path, model_path, num_episodes=100, render=False, save_dir=N
                   agent_attack_max=config['environment'].get('agent_attack_max', 50),
                   hungry_decay=config['environment'].get('hungry_decay', 2),
                   observation_range=config['environment'].get('observation_range', 4),
-                  threat_perception_range=config['environment'].get('threat_perception_range', 2))
+                  threat_perception_range=config['environment'].get('threat_perception_range', 2),
+                  num_caves=config['environment'].get('num_caves', 2),
+                  cave_health_recovery=config['environment'].get('cave_health_recovery', 8))
     
     agent = create_agent(config, env, model_path)
     if save_dir is None:

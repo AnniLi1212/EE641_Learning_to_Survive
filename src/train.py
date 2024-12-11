@@ -85,7 +85,9 @@ def train(config_path, run_name=None):
                   agent_attack_max=config['environment'].get('agent_attack_max', 50),
                   hungry_decay=config['environment'].get('hungry_decay', 2),
                   observation_range=config['environment'].get('observation_range', 4),
-                  threat_perception_range=config['environment'].get('threat_perception_range', 2))
+                  threat_perception_range=config['environment'].get('threat_perception_range', 2),
+                  num_caves=config['environment'].get('num_caves', 2),
+                  cave_health_recovery=config['environment'].get('cave_health_recovery', 8))
     
     eval_env = gym.make('SurvivalGame-v0',
                        render_mode=config['environment'].get('render_mode', None),
@@ -101,7 +103,9 @@ def train(config_path, run_name=None):
                        agent_attack_max=config['environment'].get('agent_attack_max', 50),
                        hungry_decay=config['environment'].get('hungry_decay', 2),
                        observation_range=config['environment'].get('observation_range', 4),
-                       threat_perception_range=config['environment'].get('threat_perception_range', 2))
+                       threat_perception_range=config['environment'].get('threat_perception_range', 2),
+                       num_caves=config['environment'].get('num_caves', 2),
+                       cave_health_recovery=config['environment'].get('cave_health_recovery', 8))
     
     agent = create_agent(config, env)
     log_dir, checkpoint_dir, writer = setup_logging(config, run_name)
