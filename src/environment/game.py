@@ -16,6 +16,10 @@ class SurvivalGameEnv(gym.Env):
         super().__init__()
         pygame.init()
 
+        self.agent_img = pygame.image.load('src/utils/imgs/agent.png')
+        self.threat_img = pygame.image.load('src/utils/imgs/threat.png')
+        self.food_img = pygame.image.load('src/utils/imgs/food.png')
+
         self.size = size
         self.max_steps = max_steps
         self.num_food = num_food
@@ -67,7 +71,7 @@ class SurvivalGameEnv(gym.Env):
         # for rendering
         self.window = None
         self.clock = None
-        self.window_size = 800 
+        self.window_size = 1200 
         self.render_mode = render_mode
 
     def _get_obs(self):
@@ -442,6 +446,11 @@ class SurvivalGameEnv(gym.Env):
         self.window.fill((255, 255, 255))
         cell_size = self.window_size // self.size
 
+        scaled_agent = pygame.transform.scale(self.agent_img, (cell_size, cell_size))
+        scaled_food = pygame.transform.scale(self.food_img, (cell_size, cell_size))
+        scaled_threat = pygame.transform.scale(self.threat_img, (cell_size, cell_size))
+    
+
         if self.clock is None:
             self.clock = pygame.time.Clock()
         
@@ -463,10 +472,9 @@ class SurvivalGameEnv(gym.Env):
                                    (j * cell_size, i * cell_size, 
                                     cell_size, cell_size))
                 elif 2 in self.grid[i,j]: # food
-                    pygame.draw.circle(self.window, (0, 255, 0),
-                                     (j * cell_size + cell_size//2, 
-                                      i * cell_size + cell_size//2),
-                                     cell_size//4)
+                    food_rect = scaled_food.get_rect(center=(j * cell_size + cell_size//2, 
+                                                            i * cell_size + cell_size//2))
+                    self.window.blit(scaled_food, food_rect)
                     value = self.food_values.get((i, j))
                     if value is not None:
                         text = font.render(f"{value:.0f}", True, (0, 0, 0))
@@ -481,16 +489,16 @@ class SurvivalGameEnv(gym.Env):
         # draw agent
         agent_x = self.agent_position[1] * cell_size + cell_size//2
         agent_y = self.agent_position[0] * cell_size + cell_size//2
-        pygame.draw.circle(self.window, (0, 0, 255),
-                        (agent_x, agent_y),
-                        cell_size//3)
+        agent_rect = scaled_agent.get_rect(center=(agent_x, agent_y))
+        self.window.blit(scaled_agent, agent_rect)
+
+        # draw threats  
         for i in range(self.size):
             for j in range(self.size):
                 if 3 in self.grid[i,j]:  # threat
-                    pygame.draw.circle(self.window, (255, 0, 0),
-                                    (j * cell_size + cell_size//2, 
-                                    i * cell_size + cell_size//2),
-                                    cell_size//4)
+                    threat_rect = scaled_threat.get_rect(center=(j * cell_size + cell_size//2, 
+                                                            i * cell_size + cell_size//2))
+                    self.window.blit(scaled_threat, threat_rect)
                     attack = self.threat_attacks.get((i, j), 0)
                     text = font.render(f"{attack:.0f}", True, (0, 0, 0))
                     text_rect = text.get_rect(center=(j * cell_size + cell_size//2, 
