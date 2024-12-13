@@ -78,13 +78,13 @@ class Visualizer:
                         frame = cv2.cvtColor(frame, cv2.COLOR_RGB2BGR)
                         font = cv2.FONT_HERSHEY_SIMPLEX
                         cv2.putText(frame, f'Health: {info["health"]:.1f}', 
-                                (10, 20), font, 0.5, (0, 0, 0), 1)
+                                (10, 40), font, 1.0, (0, 0, 0), 2)
                         cv2.putText(frame, f'Hunger: {info["hunger"]:.1f}', 
-                                (10, 40), font, 0.5, (0, 0, 0), 1)
+                                (10, 80), font, 1.0, (0, 0, 0), 2)
                         cv2.putText(frame, f'Attack: {info["attack"]:.1f}', 
-                                (10, 60), font, 0.5, (0, 0, 0), 1)
+                                (10, 120), font, 1.0, (0, 0, 0), 2)
                         cv2.putText(frame, f'Reward: {total_reward:.1f}', 
-                                (10, 80), font, 0.5, (0, 0, 0), 1)
+                                (10, 160), font, 1.0, (0, 0, 0), 2)
                     
                         frames.append(frame)
                     
@@ -120,50 +120,53 @@ class Visualizer:
             if 'out' in locals():
                 out.release()
 
-    def visualize_value_function(self, agent, save_path):
-        grid_size = agent.state_shape[0]
-        states = np.zeros((grid_size * grid_size, *agent.state_shape))
-        for i in range(grid_size):
-            for j in range(grid_size):
-                idx = i * grid_size + j
-                states[idx, i, j] = 4
-        
-        states_tensor = torch.from_numpy(states).float().to(agent.device)
-        additional_state = torch.ones(len(states), 3).to(agent.device)
-        
-        with torch.no_grad():
-            values = agent.policy_net(states_tensor, additional_state).max(1)[0].cpu().numpy()
-        
-        value_grid = values.reshape((grid_size, grid_size))
-        
-        # heatmap
-        plt.figure(figsize=(10, 8))
-        sns.heatmap(value_grid, cmap='viridis')
-        plt.title('State Value Function')
-        plt.xlabel('X Position')
-        plt.ylabel('Y Position')
-        
-        plt.tight_layout()
-        plt.savefig(save_path)
-        plt.close()
-
     def plot_action_distribution(self, eval_results_path):
         with open(eval_results_path, 'r') as f:
             results = json.load(f)
         
-        all_actions = []
+        action_counts = {
+            'Stay': 0,
+            'Move': 0,
+            'In Cave': 0,
+            'Eat Food': 0,
+            'Fight': 0
+        }
+        
         for episode in results['results']:
-            all_actions.extend(episode['actions'])
+            # get action records
+            if 'action_records' in episode:
+                records = episode['action_records']
+                action_counts['Stay'] += records.get('Stay', 0)
+                action_counts['Move'] += records.get('Move', 0)
+                action_counts['In Cave'] += records.get('Enter Cave', 0)
+                action_counts['Eat Food'] += records.get('Eat Food', 0)
+                action_counts['Fight'] += records.get('Fight', 0)
+            # get info
+            elif 'infos' in episode and len(episode['infos']) > 0:
+                final_info = episode['infos'][-1]
+                if 'action_records' in final_info:
+                    records = final_info['action_records']
+                    action_counts['Stay'] += records.get('Stay', 0)
+                    action_counts['Move'] += records.get('Move', 0)
+                    action_counts['In Cave'] += records.get('Enter Cave', 0)
+                    action_counts['Eat Food'] += records.get('Eat Food', 0)
+                    action_counts['Fight'] += records.get('Fight', 0)
         
         plt.figure(figsize=(10, 6))
-        action_counts = np.bincount(all_actions)
-        action_names = ['Stay', 'Up', 'Down', 'Left', 'Right']
+        actions = list(action_counts.keys())
+        counts = list(action_counts.values())
         
-        plt.bar(action_names, action_counts)
-        plt.title('Distribution of Actions During Evaluation')
-        plt.xlabel('Action')
+        bars = plt.bar(actions, counts)
+        plt.title('Distribution of Agent Actions During Evaluation')
+        plt.xlabel('Action Type')
         plt.ylabel('Count')
         plt.xticks(rotation=45)
+        
+        for bar in bars:
+            height = bar.get_height()
+            plt.text(bar.get_x() + bar.get_width()/2., height,
+                    f'{int(height)}',
+                    ha='center', va='bottom')
         
         plt.tight_layout()
         plt.savefig(os.path.join(self.save_dir, 'action_distribution.png'))
@@ -174,29 +177,29 @@ class Visualizer:
             results = json.load(f)
         
         grid_size = results['config']['environment'].get('size', 16)
-    
-        positions = []
-        for episode in results['results']:
-            for state in episode['states']:
-                state_array = np.array(state)
-                agent_pos = np.where(state_array == 4)
-                if len(agent_pos[0]) > 0:
-                    x, y = agent_pos[0][0], agent_pos[1][0]
-                    positions.append((x, y))
-        
-        plt.figure(figsize=(10, 10))
         position_counts = np.zeros((grid_size, grid_size))
-        for x, y in positions:
-            position_counts[x, y] += 1
-        
+    
+        # track agent positions
+        for episode in results['results']:
+            for info in episode['infos']:
+                if 'agent_position' in info:
+                    pos = info['agent_position']
+                    position_counts[pos[0], pos[1]] += 1
+    
         if position_counts.max() > 0:
             position_counts = position_counts / position_counts.max()
     
-        sns.heatmap(position_counts, cmap='YlOrRd')
-        plt.title('Agent Position Heatmap')
+        plt.figure(figsize=(12, 10))
+        hm = sns.heatmap(position_counts, cmap='YlOrRd', 
+                         xticklabels=range(grid_size),
+                         yticklabels=range(grid_size))
+        
+        plt.title('Agent Position Heatmap during Evaluation')
         plt.xlabel('X Position')
         plt.ylabel('Y Position')
-        
+
+        hm.collections[0].colorbar.set_label('Normalized Visit Frequency')
+
         plt.tight_layout()
         plt.savefig(os.path.join(self.save_dir, 'state_heatmap.png'))
         plt.close()
@@ -220,7 +223,7 @@ def main(tensorboard_log_dir, eval_results_path, model_path, save_dir=None, time
         print("Plotting training curves...")
         visualizer.plot_training_curves(tensorboard_log_dir)
     else:
-        print("Skipping training curves (no tensorboard logs available)")
+        print("Skipping training curves!")
     
     print("Plotting action distribution and state heatmap...")
     if eval_results_path and os.path.exists(eval_results_path):
@@ -256,10 +259,6 @@ def main(tensorboard_log_dir, eval_results_path, model_path, save_dir=None, time
 
         video_path = os.path.join(visualizer.save_dir, 'episode.mp4')
         visualizer.create_episode_video(env, agent, video_path)
-        
-        print("Visualizing value function...")
-        value_path = os.path.join(visualizer.save_dir, 'value_function.png')
-        visualizer.visualize_value_function(agent, value_path)
         
         env.close()
     

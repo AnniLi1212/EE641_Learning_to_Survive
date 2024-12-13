@@ -5,6 +5,7 @@ import random
 from ..utils import ReplayBuffer
 import os
 import torch.nn.functional as F
+import numpy as np
 
 class DQNNetwork(nn.Module):
     def __init__(self, input_shape, num_actions, hidden_sizes=[256, 128]):
@@ -13,7 +14,6 @@ class DQNNetwork(nn.Module):
         # grid info (0,1,2,3,4,5), food value, threat attack
         self.conv1 = nn.Conv2d(input_shape[0], 16, kernel_size=3, padding=1)
         self.conv2 = nn.Conv2d(16, 32, kernel_size=3, padding=1)
-        
         
         # calculate conv output size
         # input_shape[1] * input_shape[2]: size of the grid
@@ -61,16 +61,23 @@ class DQNAgent:
         self.epsilon_decay = config.get('epsilon_decay', 0.997)
         self.target_update = config.get('target_update', 10)
         self.memory_size = config.get('memory_size', 100000)
+        self.observation_range = config.get('observation_range', 10)
+
+        self.num_grid_categories = 6 # 0,1,2,3,4,5
+        self.food_value_max = config.get('food_value_max', 30)
+        self.threat_attack_max = config.get('threat_attack_max', 40)
+        self.agent_attack_max = config.get('agent_attack_max', 50)
+        self.modified_state_shape = (self.num_grid_categories + 2,) + state_shape[1:]
 
         # initialize networks
         self.policy_net = DQNNetwork(
-            self.state_shape, 
+            self.modified_state_shape, 
             self.num_actions,
             self.hidden_sizes
         ).to(self.device)
         
         self.target_net = DQNNetwork(
-            self.state_shape, 
+            self.modified_state_shape, 
             self.num_actions,
             self.hidden_sizes
         ).to(self.device)
@@ -87,6 +94,31 @@ class DQNAgent:
 
         # initialize step counter
         self.steps_done = 0
+
+    def _preprocess_state(self, state):
+        if isinstance(state, np.ndarray):
+            state = torch.FloatTensor(state)
+        grid_size = state.shape[1]
+        
+        # one-hot
+        grid = state[0]  # 1st channel for category info
+        one_hot = torch.zeros((self.num_grid_categories, grid_size, grid_size), 
+                            device=self.device)
+        for i in range(self.num_grid_categories):
+            one_hot[i] = (grid == i).float()
+        
+        # normalize food and threat values
+        food_channel = state[1] / self.food_value_max
+        threat_channel = state[2] / self.threat_attack_max
+        
+        # Stack all channels
+        processed_state = torch.cat([
+            one_hot,  # num_categories, grid_size, grid_size
+            food_channel.unsqueeze(0),  # 1, grid_size, grid_size
+            threat_channel.unsqueeze(0)  # 1, grid_size, grid_size
+        ], dim=0)
+        
+        return processed_state
         
     def select_action(self, state, info=None, training=True):
         # random action
@@ -96,12 +128,15 @@ class DQNAgent:
         
         with torch.no_grad():
             # internal state normalized
+            processed_state = self._preprocess_state(state)
+            state_tensor = processed_state.unsqueeze(0).to(self.device)
+
             additional_state = torch.FloatTensor([
                 [info['health'] / 100.0, 
                 info['hunger'] / 100.0, 
-                info['attack'] / 50.0]
+                info['attack'] / self.agent_attack_max]
             ]).to(self.device)
-            state_tensor = torch.FloatTensor(state).unsqueeze(0).to(self.device)
+            
             # calculate q values and select action
             q_values = self.policy_net(state_tensor, additional_state)
             action = q_values.argmax().item()
@@ -112,12 +147,12 @@ class DQNAgent:
         additional_state = [
             info['health'] / 100.0,
             info['hunger'] / 100.0,
-            info['attack'] / 50.0
+            info['attack'] / self.agent_attack_max
         ]
         next_additional_state = [
             next_info['health'] / 100.0,
             next_info['hunger'] / 100.0,
-            next_info['attack'] / 50.0
+            next_info['attack'] / self.agent_attack_max
         ]
         self.memory.push(state, action, reward, next_state, done, 
                         additional_state, next_additional_state)
@@ -131,11 +166,15 @@ class DQNAgent:
         # sample batch, calculate current q
         states, actions, rewards, next_states, dones, add_states, next_add_states = \
             self.memory.sample(self.batch_size, self.device)
-        current_q_values = self.policy_net(states, add_states).gather(1, actions.unsqueeze(1))
+        
+        processed_states = torch.stack([self._preprocess_state(s) for s in states])
+        processed_next_states = torch.stack([self._preprocess_state(s) for s in next_states])
+        
+        current_q_values = self.policy_net(processed_states, add_states).gather(1, actions.unsqueeze(1))
     
         # calculate target q
         with torch.no_grad():
-            next_q_values = self.target_net(next_states, next_add_states).max(1)[0]
+            next_q_values = self.target_net(processed_next_states, next_add_states).max(1)[0]
             next_q_values[dones.bool()] = 0.0
             target_q_values = rewards + self.gamma * next_q_values
         

@@ -31,48 +31,43 @@ def create_agent(config, env, model_path=None):
     return agent
 
 def evaluate_episode(env, agent, render=False):
-    state, _ = env.reset()
+    state, info = env.reset()
     done = False
     truncated = False
-    episode_reward = 0
+    total_reward = 0
     episode_length = 0
+    states = [state.tolist()]
     actions = []
-    states = []
-    healths = []
-    hungers = []
-    attack_levels = []
+    rewards = []
+    infos = [info]
     
     while not (done or truncated):
-        if render:
-            env.render()
-        
-        info = env.unwrapped._get_info()
         action = agent.select_action(state, info=info, training=False)
-        next_state, reward, done, truncated, info = env.step(action)
+        next_state, reward, done, truncated, next_info = env.step(action)
         
-        episode_reward += reward
+        total_reward += reward
         episode_length += 1
+        
+        states.append(next_state.tolist())
         actions.append(int(action))
-        states.append(state.copy())
-        healths.append(float(info['health']))
-        hungers.append(float(info['hunger']))
-        attack_levels.append(float(info['attack']))
+        rewards.append(float(reward))
+        infos.append(next_info)
         
         state = next_state
+        info = next_info
+        
+        if render:
+            env.render()
     
     return {
-        'reward': float(episode_reward),
-        'length': int(episode_length),
-        'final_health': float(info['health']),
-        'final_hunger': float(info['hunger']),
-        'attack_level': float(info['attack']),
-        'actions': actions,
+        'reward': total_reward,
+        'length': episode_length,
         'states': states,
-        'data': {
-            'health': healths,
-            'hunger': hungers,
-            'attack_level': attack_levels
-        }
+        'actions': actions,
+        'rewards': rewards,
+        'infos': infos,
+        'final_health': info.get('health', 0),
+        'action_records': info.get('action_records', {})
     }
 
 def analyze_results(results, save_dir):
@@ -158,10 +153,6 @@ def evaluate(config_path, model_path, num_episodes=100, render=False, save_dir=N
                   cave_health_recovery=config['environment'].get('cave_health_recovery', 8))
     
     agent = create_agent(config, env, model_path)
-    if save_dir is None:
-        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-        save_dir = os.path.join("results/evaluation", f"eval_{timestamp}")
-    os.makedirs(save_dir, exist_ok=True)
     
     print(f"Evaluating agent for {num_episodes} episodes...")
     results = []
@@ -204,7 +195,9 @@ def evaluate(config_path, model_path, num_episodes=100, render=False, save_dir=N
             'length': int(r['length']),
             'final_health': float(r['final_health']),
             'actions': [int(a) for a in r['actions']],
-            'states': [s.tolist() for s in r['states']]
+            'states': r['states'],
+            'infos': r['infos'],
+            'action_records': r['action_records']
         })
     
     results_file = os.path.join(save_dir, 'evaluation_results.json')
@@ -240,7 +233,7 @@ if __name__ == "__main__":
                       help='Path to config file')
     parser.add_argument('--model', type=str, required=True,
                       help='Path to model file')
-    parser.add_argument('--episodes', type=int, default=100,
+    parser.add_argument('--episodes', type=int, default=None,
                       help='Number of episodes to evaluate')
     parser.add_argument('--render', action='store_true',
                       help='Render the environment')
