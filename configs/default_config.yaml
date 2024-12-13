@@ -9,8 +9,8 @@ environment:
   food_value_max: 30
   threat_attack_min: 20
   threat_attack_max: 40
-  agent_attack_min: 30
-  agent_attack_max: 50
+  agent_attack_min: 25
+  agent_attack_max: 45
   hungry_decay: 4
   observation_range: 4
   threat_perception_range: 3
@@ -31,15 +31,15 @@ agent:
   hidden_sizes: [512, 256, 128]
 
 training:
-  max_episodes: 100
+  max_episodes: 500
   eval_frequency: 10
-  eval_episodes: 10 # num of episodes for eval
+  eval_episodes: 50 # num of episodes for eval
   save_frequency: 10
   patience: 50 # early stopping
   checkpoint_dir: "results/checkpoints"
   log_dir: "results/logs"
 
 evaluation:
-  num_episodes: 10
+  num_episodes: 50
   render: true
   save_dir: "results/evaluation"
