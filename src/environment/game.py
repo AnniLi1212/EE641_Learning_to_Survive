@@ -406,6 +406,7 @@ class SurvivalGameEnv(gym.Env):
                     self.grid[new_pos].discard(2)
                     if new_pos in self.food_values:
                         del self.food_values[new_pos]
+                    self._place_items(2, num_items=1)
             
         if moved:
             if self._previous_position in self.cave_positions:

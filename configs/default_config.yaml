@@ -20,24 +20,24 @@ environment:
 
 agent:
   type: "dqn" # "dqn", "random"
-  memory_size: 500000 # replay buffer size
+  memory_size: 100000 # replay buffer size
   batch_size: 128
-  gamma: 0.99
+  gamma: 0.95
   epsilon_start: 1.0
   epsilon_end: 0.05
   epsilon_decay: 0.998
-  learning_rate: 0.0001
+  learning_rate: 0.00001
   target_update: 50 # update target network every x episodes
-  hidden_sizes: [256, 128] # for FC
-  rnn_hidden_size: 128 # None if not using RNN
-  sequence_length: 8 # None if not using sequence
+  hidden_sizes: [1024, 512, 256] # for FC
+  rnn_hidden_size: 512 # None if not using RNN
+  sequence_length: 4 # None if not using sequence
 
 training:
-  max_episodes: 1000
-  eval_frequency: 20
-  eval_episodes: 100 # num of episodes for each eval
+  max_episodes: 500
+  eval_frequency: 10
+  eval_episodes: 50 # num of episodes for each eval
   save_frequency: 10
-  patience: 100 # early stopping
+  patience: 15 # early stopping
   checkpoint_dir: "results/checkpoints"
   log_dir: "results/logs"
 
