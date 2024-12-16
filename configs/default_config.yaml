@@ -33,7 +33,7 @@ agent:
   sequence_length: 8 # None if not using sequence
 
 training:
-  max_episodes: 10
+  max_episodes: 1000
   eval_frequency: 20
   eval_episodes: 100 # num of episodes for each eval
   save_frequency: 10
