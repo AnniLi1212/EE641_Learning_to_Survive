@@ -93,6 +93,7 @@ pip install -r requirements.txt
 ```
 
 2. **Running Experiments**
+
 Modify the default_config.yaml file to set the desired parameters.
 
 Execute the full pipeline using the provided run.sh:
