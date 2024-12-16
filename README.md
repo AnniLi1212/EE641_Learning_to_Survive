@@ -103,21 +103,21 @@ chmod +x run.sh
 ```
 3. **If run tasks separately**
 
-3.1 **Training**
+(1) **Training**
 
 Run the training script for the DQN agent:
 ```
 python train.py --config default_config.yaml
 ```
 
-3.2 **Evaluation**
+(2) **Evaluation**
 
 Evaluate a trained agent:
 ```
 python evaluate.py --config default_config.yaml --checkpoint results/checkpoints/dqn_latest.pth
 ```
 
-3.3 **Visualization**
+(3) **Visualization**
 
 Visualize training progress and evaluation results:
 ```
