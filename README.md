@@ -92,32 +92,36 @@ Install the required dependencies:
 pip install -r requirements.txt
 ```
 
-2. **Training**
+2. **Running Experiments**
+Modify the default_config.yaml file to set the desired parameters.
+
+Execute the full pipeline using the provided run.sh:
+```
+chmod +x run.sh
+./run.sh
+```
+3. **If run tasks separately**
+
+3.1 **Training**
 
 Run the training script for the DQN agent:
 ```
 python train.py --config default_config.yaml
 ```
 
-3. **Evaluation**
+3.2 **Evaluation**
 
 Evaluate a trained agent:
 ```
 python evaluate.py --config default_config.yaml --checkpoint results/checkpoints/dqn_latest.pth
 ```
-4. **Visualization**
+
+3.3 **Visualization**
 
 Visualize training progress and evaluation results:
 ```
 python visualize.py --log_dir results/logs
 ```
-5. **Run Everything with Shell Script**
-
-Alternatively, execute the full pipeline using the provided run.sh:
-**
-./run.sh
-**
-
 ### Results
 - Training Logs: Stored in results/logs.
 - Checkpoints: Saved in results/checkpoints every few episodes.
