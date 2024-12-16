@@ -82,7 +82,8 @@ class Visualizer:
         stats = {
             'agent': {
                 'mean_reward': np.mean(agent_rewards),
-                'std_reward': np.std(agent_rewards)
+                'std_reward': np.std(agent_rewards),
+                'device': results.get('device', 'unknown') 
             }
         }
         
@@ -155,6 +156,13 @@ class Visualizer:
             import cv2
             frames = []
             state, info = env.reset()
+
+            if isinstance(state, np.ndarray):
+                state = torch.FloatTensor(state)
+            if hasattr(agent, 'device'):
+                state = state.to(agent.device)
+            
+
             done = False
             truncated = False
             total_reward = 0
@@ -181,6 +189,13 @@ class Visualizer:
 
                     action = agent.select_action(state, info=info, training=False)
                     next_state, reward, done, truncated, next_info = env.step(action)
+
+                    if isinstance(next_state, np.ndarray):
+                        next_state = torch.FloatTensor(next_state)
+                    if hasattr(agent, 'device'):
+                        next_state = next_state.to(agent.device)
+                        
+
                     total_reward += reward
                     
                     state = next_state
@@ -456,6 +471,10 @@ def main(tensorboard_log_dir, eval_results_path, model_path, save_dir=None, time
                       num_caves=config['environment'].get('num_caves', 5),
                       cave_health_recovery=config['environment'].get('cave_health_recovery', 2),
                       hungry_health_penalty=config['environment'].get('hungry_health_penalty', 2))
+        
+        device = torch.device("cuda" if torch.cuda.is_available() else 
+                              "mps" if torch.backends.mps.is_available() else 
+                              "cpu")
         
         agent = DQNAgent(
             state_shape=env.observation_space.shape,

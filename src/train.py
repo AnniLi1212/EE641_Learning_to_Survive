@@ -21,6 +21,14 @@ def setup_logging(config, run_name=None):
     checkpoint_dir = os.path.join("results/checkpoints", run_name)
     os.makedirs(log_dir, exist_ok=True)
     os.makedirs(checkpoint_dir, exist_ok=True)
+
+    if torch.cuda.is_available():
+        device = "cuda"
+    elif torch.backends.mps.is_available():
+        device = "mps"
+    else:
+        device = "cpu"
+    config['device'] = device
     
     with open(os.path.join(log_dir, 'config.yaml'), 'w') as f:
         yaml.dump(config, f)
@@ -31,11 +39,12 @@ def setup_logging(config, run_name=None):
 def create_agent(config, env):
     agent_type = config['agent']['type']
     if agent_type == "dqn":
-        return DQNAgent(
+        agent = DQNAgent(
             state_shape=env.observation_space.shape,
             action_space=env.action_space,
             config=config['agent']
         )
+        return agent
     elif agent_type == "random":
         return RandomAgent(
             state_shape=env.observation_space.shape,
@@ -55,6 +64,11 @@ def evaluate_agent(env, agent, baseline_agent=None, random_agent=None, num_episo
     
     for _ in range(num_episodes):
         state, info = env.reset()[0], env.unwrapped._get_info()
+        if isinstance(state, np.ndarray):
+            state = torch.FloatTensor(state)
+        if hasattr(agent, 'device'):
+            state = state.to(agent.device)
+
         done = False
         truncated = False
         episode_reward = 0
@@ -68,6 +82,12 @@ def evaluate_agent(env, agent, baseline_agent=None, random_agent=None, num_episo
         while not (done or truncated):
             action = agent.select_action(state, info=info, training=False)
             next_state, reward, done, truncated, next_info = env.step(action)
+
+            if isinstance(next_state, np.ndarray):
+                next_state = torch.FloatTensor(next_state)
+            if hasattr(agent, 'device'):
+                next_state = next_state.to(agent.device)
+
             episode_reward += reward
             episode_length += 1
             state = next_state
@@ -185,6 +205,12 @@ def train(config_path, run_name=None):
     
     while episode < config['training']['max_episodes']:
         state, info = env.reset()[0], env.unwrapped._get_info()
+
+        if isinstance(state, np.ndarray):
+            state = torch.FloatTensor(state)
+        if hasattr(agent, 'device'):
+            state = state.to(agent.device)
+
         agent.reset()
         done = False
         truncated = False
@@ -192,6 +218,9 @@ def train(config_path, run_name=None):
 
         if episode == baseline_episodes:
             baseline_agent = create_agent(config, env)
+            if hasattr(agent, 'device') and hasattr(baseline_agent, 'device'):
+                baseline_agent.policy_net = baseline_agent.policy_net.to(agent.device)
+                baseline_agent.target_net = baseline_agent.target_net.to(agent.device)
             baseline_agent.policy_net.load_state_dict(agent.policy_net.state_dict())
             baseline_path = os.path.join(checkpoint_dir, 'baseline_model.pth')
             baseline_agent.save(baseline_path)
@@ -200,6 +229,12 @@ def train(config_path, run_name=None):
         while not (done or truncated):
             action = agent.select_action(state, info=info)
             next_state, reward, done, truncated, next_info = env.step(action)
+
+            if isinstance(next_state, np.ndarray):
+                next_state = torch.FloatTensor(next_state)
+            if hasattr(agent, 'device'):
+                next_state = next_state.to(agent.device)
+                
             episode_reward += reward
             
             info = env.unwrapped._get_info()

@@ -104,12 +104,22 @@ def compute_q_value_diff(agent, baseline_agent, state, info):
         return 0.0
     
     try:
+        if isinstance(state, np.ndarray):
+            state = torch.FloatTensor(state)
+        if hasattr(agent, 'device'):
+            state = state.to(agent.device)
+            
         agent_q_values = agent.get_q_values(state, info)
+
+        if hasattr(baseline_agent, 'device') and baseline_agent.device != agent.device:
+            state = state.to(baseline_agent.device)
         baseline_q_values = baseline_agent.get_q_values(state, info)
         
         if agent_q_values is None or baseline_q_values is None:
             return 0.0
-            
+        
+        if baseline_q_values.device != agent_q_values.device:
+            baseline_q_values = baseline_q_values.to(agent_q_values.device)
         q_diff = (agent_q_values - baseline_q_values).mean().item()
         return float(q_diff)
         
@@ -295,6 +305,8 @@ def evaluate(config_path, model_path, baseline_path=None, num_episodes=100, rend
     if save_dir:
         os.makedirs(save_dir, exist_ok=True)
         results_file = os.path.join(save_dir, 'evaluation_results.json')
+        if hasattr(agent, 'device'):
+            config['agent']['device'] = str(agent.device)
 
         results_native = []
         for r in results:

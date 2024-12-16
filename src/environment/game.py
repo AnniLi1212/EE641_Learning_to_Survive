@@ -141,9 +141,9 @@ class SurvivalGameEnv(gym.Env):
         
         # stack all channels
         observation = np.concatenate([
-            one_hot_grid,
-            food_window[np.newaxis, :, :],
-            threat_window[np.newaxis, :, :]
+            one_hot_grid.astype(np.float32),
+            food_window[np.newaxis, :, :].astype(np.float32),
+            threat_window[np.newaxis, :, :].astype(np.float32)
         ], axis=0)
         
         return observation

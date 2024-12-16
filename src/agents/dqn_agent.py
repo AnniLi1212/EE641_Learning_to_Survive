@@ -8,8 +8,9 @@ import torch.nn.functional as F
 import numpy as np
 
 class DQNNetwork(nn.Module):
-    def __init__(self, input_shape, num_actions, hidden_sizes=[256, 128], rnn_hidden_size=None):
+    def __init__(self, input_shape, num_actions, hidden_sizes=[256, 128], rnn_hidden_size=None, device='cpu'):
         super().__init__()
+        self.device = device
         # use conv to process input: 5 channels (one hot[wall, agent, cave], food value, threat attack)
         self.conv1 = nn.Conv2d(input_shape[0], 16, kernel_size=3, padding=1)
         self.conv2 = nn.Conv2d(16, 32, kernel_size=3, padding=1)
@@ -95,7 +96,7 @@ class DQNAgent:
         self.state_shape = state_shape
         self.action_space = action_space
         self.num_actions = action_space.n
-        self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+        self.device = self._get_device()
         
         # hyperparameters from config
         self.batch_size = config.get('batch_size', 128)
@@ -123,14 +124,16 @@ class DQNAgent:
             self.modified_state_shape, 
             self.num_actions,
             self.hidden_sizes,
-            self.rnn_hidden_size
+            self.rnn_hidden_size,
+            self.device
         ).to(self.device)
         
         self.target_net = DQNNetwork(
             self.modified_state_shape, 
             self.num_actions,
             self.hidden_sizes,
-            self.rnn_hidden_size
+            self.rnn_hidden_size,
+            self.device
         ).to(self.device)
         
         self.target_net.load_state_dict(self.policy_net.state_dict())
@@ -150,7 +153,18 @@ class DQNAgent:
         # initialize step counter
         self.steps_done = 0
 
+    def _get_device(self):
+        if torch.cuda.is_available():
+            return torch.device("cuda")
+        elif torch.backends.mps.is_available():
+            return torch.device("mps")
+        return torch.device("cpu")
+    
     def _preprocess_single_state(self, state):
+        if not isinstance(state, torch.Tensor):
+            state = torch.FloatTensor(state)
+        state = state.to(self.device)
+
         grid = state[0]
         one_hot = torch.zeros((self.num_grid_categories, state.shape[1], state.shape[2]), 
                               device=self.device)
@@ -172,6 +186,7 @@ class DQNAgent:
     def _preprocess_state(self, state):
         if isinstance(state, np.ndarray):
             state = torch.FloatTensor(state)
+        state = state.to(self.device)
         
         if len(state.shape) == 5: # batchsize, seqlen, channel, grid_size, grid_size
             batch_size, seq_len = state.shape[0], state.shape[1]
@@ -240,6 +255,10 @@ class DQNAgent:
             return action
     
     def train(self, state, action, reward, next_state, done, info, next_info):
+        if isinstance(state, np.ndarray):
+            state = torch.FloatTensor(state).to(self.device)
+        if isinstance(next_state, np.ndarray):
+            next_state = torch.FloatTensor(next_state).to(self.device)
         # store transition in memory
         additional_state = [
             info['health'] / 100.0,
@@ -313,7 +332,8 @@ class DQNAgent:
             'epsilon': float(self.epsilon),
             'steps_done': int(self.steps_done),
             'state_shape': tuple(int(x) for x in self.state_shape),
-            'num_actions': int(self.num_actions)
+            'num_actions': int(self.num_actions),
+            'device': str(self.device)
         }, path)
         
     def load(self, path):
@@ -323,3 +343,6 @@ class DQNAgent:
         self.optimizer.load_state_dict(checkpoint['optimizer_state_dict'])
         self.epsilon = float(checkpoint['epsilon'])
         self.steps_done = int(checkpoint['steps_done'])
+
+        self.policy_net = self.policy_net.to(self.device)
+        self.target_net = self.target_net.to(self.device)
