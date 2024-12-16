@@ -39,15 +39,19 @@ def create_agent(config, env):
     elif agent_type == "random":
         return RandomAgent(
             state_shape=env.observation_space.shape,
-            action_space=env.action_space
+            action_space=env.action_space,
+            config=config
         )
     else:
         raise ValueError(f"Unknown agent type: {agent_type}")
 
 # evaluate agent performance
-def evaluate_agent(env, agent, num_episodes=10):
+def evaluate_agent(env, agent, baseline_agent=None, random_agent=None, num_episodes=10):
     total_rewards = []
     episode_lengths = []
+    baseline_rewards = []
+    random_rewards = []
+    q_value_diffs = []
     
     for _ in range(num_episodes):
         state, info = env.reset()[0], env.unwrapped._get_info()
@@ -56,6 +60,11 @@ def evaluate_agent(env, agent, num_episodes=10):
         episode_reward = 0
         episode_length = 0
         
+        if baseline_agent:
+            from src.evaluate import compute_q_value_diff
+            q_value_diff = compute_q_value_diff(agent, baseline_agent, state, info)
+            q_value_diffs.append(q_value_diff)
+
         while not (done or truncated):
             action = agent.select_action(state, info=info, training=False)
             next_state, reward, done, truncated, next_info = env.step(action)
@@ -66,8 +75,58 @@ def evaluate_agent(env, agent, num_episodes=10):
 
         total_rewards.append(episode_reward)
         episode_lengths.append(episode_length)
+
+        # eval baseline
+        if baseline_agent:
+            state, info = env.reset()[0], env.unwrapped._get_info()
+            done = False
+            truncated = False
+            episode_reward = 0
+            
+            while not (done or truncated):
+                action = baseline_agent.select_action(state, info=info, training=False)
+                next_state, reward, done, truncated, next_info = env.step(action)
+                episode_reward += reward
+                state = next_state
+                info = env.unwrapped._get_info()
+            
+            baseline_rewards.append(episode_reward) 
+        
+        # eval random
+        if random_agent:
+            state, info = env.reset()[0], env.unwrapped._get_info()
+            done = False
+            truncated = False
+            random_reward = 0
+
+            while not (done or truncated):
+                action = random_agent.select_action(state, info=info, training=False)
+                next_state, reward, done, truncated, next_info = env.step(action)
+                random_reward += reward
+                state = next_state
+                info = env.unwrapped._get_info()
+
+            random_rewards.append(random_reward)
     
-    return np.mean(total_rewards), np.mean(episode_lengths)
+    results = {
+        'reward': np.mean(total_rewards),
+        'length': np.mean(episode_lengths)
+    }
+
+    if baseline_agent:
+        results.update({
+            'baseline_reward': np.mean(baseline_rewards),
+            'q_value_diff': np.mean(q_value_diffs),
+            'improvement_over_baseline': np.mean(total_rewards) - np.mean(baseline_rewards)
+        })
+    
+    if random_agent:
+        results.update({
+            'random_reward': np.mean(random_rewards),
+            'improvement_over_random': np.mean(total_rewards) - np.mean(random_rewards)
+        })
+    
+    return results
 
 def train(config_path, run_name=None):
     config = load_config(config_path)
@@ -81,13 +140,14 @@ def train(config_path, run_name=None):
                   food_value_max=config['environment'].get('food_value_max', 30),
                   threat_attack_min=config['environment'].get('threat_attack_min', 20),
                   threat_attack_max=config['environment'].get('threat_attack_max', 40),
-                  agent_attack_min=config['environment'].get('agent_attack_min', 30),
-                  agent_attack_max=config['environment'].get('agent_attack_max', 50),
+                  agent_attack_min=config['environment'].get('agent_attack_min', 25),
+                  agent_attack_max=config['environment'].get('agent_attack_max', 45),
                   hungry_decay=config['environment'].get('hungry_decay', 2),
                   observation_range=config['environment'].get('observation_range', 4),
-                  threat_perception_range=config['environment'].get('threat_perception_range', 2),
-                  num_caves=config['environment'].get('num_caves', 2),
-                  cave_health_recovery=config['environment'].get('cave_health_recovery', 8))
+                  threat_perception_range=config['environment'].get('threat_perception_range', 3),
+                  num_caves=config['environment'].get('num_caves', 5),
+                  cave_health_recovery=config['environment'].get('cave_health_recovery', 2),
+                  hungry_health_penalty=config['environment'].get('hungry_health_penalty', 2))
     
     eval_env = gym.make('SurvivalGame-v0',
                        render_mode=config['environment'].get('render_mode', None),
@@ -99,13 +159,14 @@ def train(config_path, run_name=None):
                        food_value_max=config['environment'].get('food_value_max', 30),
                        threat_attack_min=config['environment'].get('threat_attack_min', 20),
                        threat_attack_max=config['environment'].get('threat_attack_max', 40),
-                       agent_attack_min=config['environment'].get('agent_attack_min', 30),
-                       agent_attack_max=config['environment'].get('agent_attack_max', 50),
+                       agent_attack_min=config['environment'].get('agent_attack_min', 25),
+                       agent_attack_max=config['environment'].get('agent_attack_max', 45),
                        hungry_decay=config['environment'].get('hungry_decay', 2),
                        observation_range=config['environment'].get('observation_range', 4),
-                       threat_perception_range=config['environment'].get('threat_perception_range', 2),
-                       num_caves=config['environment'].get('num_caves', 2),
-                       cave_health_recovery=config['environment'].get('cave_health_recovery', 8))
+                       threat_perception_range=config['environment'].get('threat_perception_range', 3),
+                       num_caves=config['environment'].get('num_caves', 5),
+                    cave_health_recovery=config['environment'].get('cave_health_recovery', 2),
+                       hungry_health_penalty=config['environment'].get('hungry_health_penalty', 2))
     
     agent = create_agent(config, env)
     log_dir, checkpoint_dir, writer = setup_logging(config, run_name)
@@ -117,12 +178,25 @@ def train(config_path, run_name=None):
     total_loss = 0
     num_losses = 0
     
+    # max episode // 10 as baseline storing episode
+    baseline_episodes = config['training']['max_episodes'] // 10
+    baseline_agent = None
+    random_agent = RandomAgent(env.observation_space.shape, env.action_space, config)
+    
     while episode < config['training']['max_episodes']:
         state, info = env.reset()[0], env.unwrapped._get_info()
+        agent.reset()
         done = False
         truncated = False
         episode_reward = 0
-        
+
+        if episode == baseline_episodes:
+            baseline_agent = create_agent(config, env)
+            baseline_agent.policy_net.load_state_dict(agent.policy_net.state_dict())
+            baseline_path = os.path.join(checkpoint_dir, 'baseline_model.pth')
+            baseline_agent.save(baseline_path)
+            print(f"Baseline model saved to {baseline_path} at episode {episode}")
+
         while not (done or truncated):
             action = agent.select_action(state, info=info)
             next_state, reward, done, truncated, next_info = env.step(action)
@@ -132,10 +206,8 @@ def train(config_path, run_name=None):
             next_info = env.unwrapped._get_info()
 
             loss = agent.train(state, action, reward, next_state, done, info, next_info)
-            
-            writer.add_scalar('Train/Health', info['health'], episode)
 
-            if loss is not None:
+            if loss is not None and isinstance(agent, DQNAgent):
                 total_loss += loss
                 num_losses += 1
             
@@ -143,6 +215,8 @@ def train(config_path, run_name=None):
             info = next_info
         
         writer.add_scalar('Train/Episode_Reward', episode_reward, episode)
+        writer.add_scalar('Train/Health', info['health'], episode)
+
         if num_losses > 0:
             avg_loss = total_loss / num_losses
             writer.add_scalar('Train/Average_Loss', avg_loss, episode)
@@ -150,13 +224,22 @@ def train(config_path, run_name=None):
             num_losses = 0
         
         if episode % config['training']['eval_frequency'] == 0:
-            eval_reward, eval_length = evaluate_agent(eval_env, agent, 
-                                                    config['training']['eval_episodes'])
-            writer.add_scalar('Eval/Average_Reward', eval_reward, episode)
-            writer.add_scalar('Eval/Average_Length', eval_length, episode)
+            eval_results = evaluate_agent(eval_env, agent, baseline_agent, random_agent, 
+                                            config['training']['eval_episodes'])
             
-            if eval_reward > best_eval_reward:
-                best_eval_reward = eval_reward
+            writer.add_scalar('Eval/Average_Reward', eval_results['reward'], episode)
+            writer.add_scalar('Eval/Average_Length', eval_results['length'], episode)
+
+            if baseline_agent:
+                writer.add_scalar('Eval/Baseline_Reward', eval_results['baseline_reward'], episode)
+                writer.add_scalar('Eval/Q_Value_Diff', eval_results['q_value_diff'], episode)
+                writer.add_scalar('Eval/Improvement_over_Baseline', eval_results['improvement_over_baseline'], episode)
+            
+            writer.add_scalar('Eval/Random_Reward', eval_results['random_reward'], episode)
+            writer.add_scalar('Eval/Improvement_over_Random', eval_results['improvement_over_random'], episode)
+            
+            if eval_results['reward'] > best_eval_reward:
+                best_eval_reward = eval_results['reward']
                 no_improvement_count = 0
                 agent.save(os.path.join(checkpoint_dir, 'best_model.pth'))
             else:

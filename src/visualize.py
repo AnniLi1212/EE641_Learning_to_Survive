@@ -11,12 +11,100 @@ from src import SurvivalGameEnv, DQNAgent
 import pygame
 from PIL import Image
 import yaml 
+from collections import defaultdict
 
 class Visualizer:
     def __init__(self, save_dir):
         self.save_dir = save_dir
         os.makedirs(self.save_dir, exist_ok=True)
 
+    def plot_comparison_metrics(self, eval_results_path):
+        with open(eval_results_path, 'r') as f:
+            results = json.load(f)
+        
+        # episode data
+        episodes = list(range(len(results['results'])))
+        agent_rewards = [r['reward'] for r in results['results']]
+        baseline_rewards = [r.get('baseline_reward') for r in results['results'] if 'baseline_reward' in r]
+        random_rewards = [r.get('random_reward') for r in results['results'] if 'random_reward' in r]
+        q_value_diffs = [r.get('q_value_diff') for r in results['results'] if 'q_value_diff' in r]
+    
+        # reward comparisons
+        plt.figure(figsize=(12, 6))
+        plt.plot(episodes, agent_rewards, label='Trained Agent', color='blue', alpha=0.8)
+        if baseline_rewards:
+            plt.plot(episodes, baseline_rewards, label='Baseline Agent', color='orange', alpha=0.8)
+        if random_rewards:
+            plt.plot(episodes, random_rewards, label='Random Agent', color='red', alpha=0.8)
+        
+        plt.title('Reward Comparison Across Episodes')
+        plt.xlabel('Episode')
+        plt.ylabel('Reward')
+        plt.legend()
+        plt.grid(True, alpha=0.3)
+        plt.savefig(os.path.join(self.save_dir, 'reward_comparison.png'))
+        plt.close()
+
+        # q value diff
+        if q_value_diffs:
+            plt.figure(figsize=(12, 6))
+            plt.plot(episodes, q_value_diffs, color='green', alpha=0.8)
+            plt.axhline(y=0, color='r', linestyle='--', alpha=0.3)
+            plt.title('Q-Value Differences (Trained - Baseline)')
+            plt.xlabel('Episode')
+            plt.ylabel('Q-Value Difference')
+            plt.grid(True, alpha=0.3)
+            plt.savefig(os.path.join(self.save_dir, 'q_value_differences.png'))
+            plt.close()
+
+        # reward box
+        plt.figure(figsize=(10, 6))
+        data = []
+        labels = []
+
+        if agent_rewards:
+            data.append(agent_rewards)
+            labels.append('Trained')
+        if baseline_rewards:
+            data.append(baseline_rewards)
+            labels.append('Baseline')
+        if random_rewards:
+            data.append(random_rewards)
+            labels.append('Random')
+        
+        plt.boxplot(data, tick_labels=labels)
+        plt.title('Reward Distribution Comparison')
+        plt.ylabel('Reward')
+        plt.grid(True)
+        plt.savefig(os.path.join(self.save_dir, 'reward_distributions.png'))
+        plt.close()
+
+        stats = {
+            'agent': {
+                'mean_reward': np.mean(agent_rewards),
+                'std_reward': np.std(agent_rewards)
+            }
+        }
+        
+        if baseline_rewards:
+            stats['baseline'] = {
+                'mean_reward': np.mean(baseline_rewards),
+                'std_reward': np.std(baseline_rewards),
+                'mean_q_diff': np.mean(q_value_diffs),
+                'std_q_diff': np.std(q_value_diffs)
+            }
+        
+        if random_rewards:
+            stats['random'] = {
+                'mean_reward': np.mean(random_rewards),
+                'std_reward': np.std(random_rewards)
+            }
+        
+        with open(os.path.join(self.save_dir, 'comparison_stats.json'), 'w') as f:
+            json.dump(stats, f, indent=4)
+
+        return stats
+    
     def plot_training_curves(self, tensorboard_log_dir):
         event_acc = EventAccumulator(tensorboard_log_dir)
         event_acc.Reload()
@@ -46,7 +134,7 @@ class Visualizer:
             health = [(s.step, s.value) for s in event_acc.Scalars('Train/Health')]
             steps, values = zip(*health)
             axes[1, 0].plot(steps, values)
-            axes[1, 0].set_title('Agent Health')
+            axes[1, 0].set_title('Agent Health When Episode Ends')
             axes[1, 0].set_xlabel('Episode')
             axes[1, 0].set_ylabel('Health')
             
@@ -123,53 +211,154 @@ class Visualizer:
     def plot_action_distribution(self, eval_results_path):
         with open(eval_results_path, 'r') as f:
             results = json.load(f)
-        
-        action_counts = {
-            'Stay': 0,
-            'Move': 0,
-            'In Cave': 0,
-            'Eat Food': 0,
-            'Fight': 0
+
+        agent_counts = {
+            'trained': defaultdict(int),
+            'baseline': defaultdict(int),
+            'random': defaultdict(int)
         }
+        action_types = [
+            'Stay', 'Move', 
+            'Eat Food, Hungry < 50', 'Eat Food, Hungry >= 50',
+            'Fight Weaker Threat', 'Fight Stronger Threat',
+            'Enter Cave, Health < 100', 'Enter Cave, Health >= 100'
+        ]
+        for agent_type in agent_counts:
+            for action in action_types:
+                agent_counts[agent_type][action] = 0
         
         for episode in results['results']:
-            # get action records
+            # trained agent
             if 'action_records' in episode:
-                records = episode['action_records']
-                action_counts['Stay'] += records.get('Stay', 0)
-                action_counts['Move'] += records.get('Move', 0)
-                action_counts['In Cave'] += records.get('Enter Cave', 0)
-                action_counts['Eat Food'] += records.get('Eat Food', 0)
-                action_counts['Fight'] += records.get('Fight', 0)
-            # get info
-            elif 'infos' in episode and len(episode['infos']) > 0:
-                final_info = episode['infos'][-1]
-                if 'action_records' in final_info:
-                    records = final_info['action_records']
-                    action_counts['Stay'] += records.get('Stay', 0)
-                    action_counts['Move'] += records.get('Move', 0)
-                    action_counts['In Cave'] += records.get('Enter Cave', 0)
-                    action_counts['Eat Food'] += records.get('Eat Food', 0)
-                    action_counts['Fight'] += records.get('Fight', 0)
+                for action, count in episode['action_records'].items():
+                    agent_counts['trained'][action] += count
+            
+            # basline agent
+            if 'baseline_action_records' in episode:
+                for action, count in episode['baseline_action_records'].items():
+                    agent_counts['baseline'][action] += count
+
+            # random agent
+            if 'random_action_records' in episode:
+                for action, count in episode['random_action_records'].items():
+                    agent_counts['random'][action] += count
+
+        total_actions = {
+            'trained': sum(agent_counts['trained'].values()),
+            'baseline': sum(agent_counts['baseline'].values()),
+            'random': sum(agent_counts['random'].values())
+        }
+        # print("\nAction counts:")
+        # for agent_type in ['trained', 'baseline', 'random']:
+        #     print(f"\n{agent_type.capitalize()} Agent:")
+        #     print(f"Total actions: {total_actions[agent_type]}")
+        #     for action, count in agent_counts[agent_type].items():
+        #         print(f"{action}: {count}")
+        fig, (ax1, ax2, ax3) = plt.subplots(1, 3, figsize=(24, 8))
+
+        def plot_agent_actions(ax, counts, total, title):
+            if not counts:
+                ax.set_title(f'{title}\nTotal Actions: 0')
+                return
+            
+            x_positions = np.arange(5)
+            ax2 = ax.twinx()
+
+            basic_values = [counts['Stay'], counts['Move']]
+            basic_bars = ax.bar(x_positions[:2], basic_values, color='grey')
+            ax.set_ylabel('Basic Action Count', color='grey')
+            ax.tick_params(axis='y', labelcolor='grey')
+
+            food_total = counts['Eat Food, Hungry < 50'] + counts['Eat Food, Hungry >= 50']
+            food_bar = ax2.bar(x_positions[2], food_total, color=['lightgreen'])
+            food_bar.patches[0].set_y(counts['Eat Food, Hungry < 50'])
+            food_bar.patches[0].set_height(counts['Eat Food, Hungry >= 50'])
+            ax2.bar(x_positions[2], counts['Eat Food, Hungry < 50'], color='green')
+            
+            fight_total = counts['Fight Stronger Threat'] + counts['Fight Weaker Threat']
+            fight_bar = ax2.bar(x_positions[3], fight_total, color=['lightcoral'])
+            fight_bar.patches[0].set_y(counts['Fight Weaker Threat'])
+            fight_bar.patches[0].set_height(counts['Fight Stronger Threat'])
+            ax2.bar(x_positions[3], counts['Fight Weaker Threat'], color='red')
+            
+            cave_total = counts['Enter Cave, Health < 100'] + counts['Enter Cave, Health >= 100']
+            cave_bar = ax2.bar(x_positions[4], cave_total, color=['lightblue'])
+            cave_bar.patches[0].set_y(counts['Enter Cave, Health < 100'])
+            cave_bar.patches[0].set_height(counts['Enter Cave, Health >= 100'])
+            ax2.bar(x_positions[4], counts['Enter Cave, Health < 100'], color='blue')
+            
+            ax2.set_ylabel('Conditional Action Count', color='darkgreen')
+            ax2.tick_params(axis='y', labelcolor='darkgreen')
+            
+            max_basic = max(basic_values)
+            if max_basic == 0:
+                ax.set_ylim(0, 1)
+            else:
+                ax.set_ylim(0, max_basic * 1.1)
+            
+            max_conditional = max(food_total, fight_total, cave_total)
+            if max_conditional == 0:
+                ax2.set_ylim(0, 1)
+            else:
+                ax2.set_ylim(0, max_conditional * 1.2)
+
+            ax.set_xticks(x_positions)
+            ax.set_xticklabels(['Stay', 'Move', 'Eat Food', 'Fight', 'Enter Cave'], rotation=45)
+            ax.set_title(f'{title}\nTotal Actions: {total}')
+                    
+            def add_value_label(bar, value, ax_to_label):
+                if value > 0:
+                    ax_to_label.text(
+                        bar.get_x() + bar.get_width()/2.,
+                        bar.get_y() + bar.get_height()/2.,
+                        f'{int(value)}',
+                        ha='center', va='center'
+                    )
+
+            for bar in basic_bars:
+                add_value_label(bar, bar.get_height(), ax)
+
+            if food_total > 0:
+                ax2.text(x_positions[2], counts['Eat Food, Hungry < 50']/2,
+                    f'{int(counts["Eat Food, Hungry < 50"])}', ha='center', va='center')
+                ax2.text(x_positions[2], counts['Eat Food, Hungry < 50'] + counts['Eat Food, Hungry >= 50']/2,
+                    f'{int(counts["Eat Food, Hungry >= 50"])}', ha='center', va='center')
+            
+            if fight_total > 0:
+                ax2.text(x_positions[3], counts['Fight Weaker Threat']/2,
+                    f'{int(counts["Fight Weaker Threat"])}', ha='center', va='center')
+                ax2.text(x_positions[3], counts['Fight Weaker Threat'] + counts['Fight Stronger Threat']/2,
+                    f'{int(counts["Fight Stronger Threat"])}', ha='center', va='center')
+            
+            if cave_total > 0:
+                ax2.text(x_positions[4], counts['Enter Cave, Health < 100']/2,
+                    f'{int(counts["Enter Cave, Health < 100"])}', ha='center', va='center')
+                ax2.text(x_positions[4], counts['Enter Cave, Health < 100'] + counts['Enter Cave, Health >= 100']/2,
+                    f'{int(counts["Enter Cave, Health >= 100"])}', ha='center', va='center')
         
-        plt.figure(figsize=(10, 6))
-        actions = list(action_counts.keys())
-        counts = list(action_counts.values())
+        plot_agent_actions(ax1, agent_counts['trained'], total_actions['trained'], 'Trained Agent')
+        plot_agent_actions(ax2, agent_counts['baseline'], total_actions['baseline'], 'Baseline Agent')
+        plot_agent_actions(ax3, agent_counts['random'], total_actions['random'], 'Random Agent')
+
+
+        legend_elements = [
+            plt.Rectangle((0,0),1,1, facecolor='grey', label='Basic Action'),
+            plt.Rectangle((0,0),1,1, facecolor='green', label='Eat Food, Hungry < 50'),
+            plt.Rectangle((0,0),1,1, facecolor='lightgreen', label='Eat Food, Hungry >= 50'),
+            plt.Rectangle((0,0),1,1, facecolor='red', label='Fight Weaker Threat'),
+            plt.Rectangle((0,0),1,1, facecolor='lightcoral', label='Fight Stronger Threat'),
+            plt.Rectangle((0,0),1,1, facecolor='blue', label='Enter Cave, Health < 100'),
+            plt.Rectangle((0,0),1,1, facecolor='lightblue', label='Enter Cave, Health >= 100')
+        ]
+        fig.legend(handles=legend_elements, 
+          loc='center', 
+          bbox_to_anchor=(0.5, -0.1),
+          ncol=4)
         
-        bars = plt.bar(actions, counts)
-        plt.title('Distribution of Agent Actions During Evaluation')
-        plt.xlabel('Action Type')
-        plt.ylabel('Count')
-        plt.xticks(rotation=45)
-        
-        for bar in bars:
-            height = bar.get_height()
-            plt.text(bar.get_x() + bar.get_width()/2., height,
-                    f'{int(height)}',
-                    ha='center', va='bottom')
-        
+        plt.suptitle('Action Distribution Comparison', fontsize=16, y=1.05)
         plt.tight_layout()
-        plt.savefig(os.path.join(self.save_dir, 'action_distribution.png'))
+        plt.savefig(os.path.join(self.save_dir, 'action_distributions_comparison.png'), 
+                    bbox_inches='tight', dpi=300)
         plt.close()
 
     def plot_state_heatmap(self, eval_results_path):
@@ -224,9 +413,24 @@ def main(tensorboard_log_dir, eval_results_path, model_path, save_dir=None, time
         visualizer.plot_training_curves(tensorboard_log_dir)
     else:
         print("Skipping training curves!")
-    
-    print("Plotting action distribution and state heatmap...")
+
     if eval_results_path and os.path.exists(eval_results_path):
+        print("Plotting reward comparison metrics...")
+        comparison_stats = visualizer.plot_comparison_metrics(eval_results_path)
+        print("\nComparison Statistics:")
+        print("Trained Agent:")
+        print(f"  Mean Reward: {comparison_stats['agent']['mean_reward']:.2f} ± {comparison_stats['agent']['std_reward']:.2f}")
+            
+        if 'baseline' in comparison_stats:
+            print("\nBaseline Agent:")
+            print(f"  Mean Reward: {comparison_stats['baseline']['mean_reward']:.2f} ± {comparison_stats['baseline']['std_reward']:.2f}")
+            print(f"  Mean Q-Value Difference: {comparison_stats['baseline']['mean_q_diff']:.2f} ± {comparison_stats['baseline']['std_q_diff']:.2f}")
+        
+        if 'random' in comparison_stats:
+            print("\nRandom Agent:")
+            print(f"  Mean Reward: {comparison_stats['random']['mean_reward']:.2f} ± {comparison_stats['random']['std_reward']:.2f}")
+            
+        print("\nPlotting action distribution and state heatmap...")
         visualizer.plot_action_distribution(eval_results_path)
         visualizer.plot_state_heatmap(eval_results_path)
     else:
@@ -244,11 +448,14 @@ def main(tensorboard_log_dir, eval_results_path, model_path, save_dir=None, time
                       food_value_max=config['environment'].get('food_value_max', 30),
                       threat_attack_min=config['environment'].get('threat_attack_min', 20),
                       threat_attack_max=config['environment'].get('threat_attack_max', 40),
-                      agent_attack_min=config['environment'].get('agent_attack_min', 30),
-                      agent_attack_max=config['environment'].get('agent_attack_max', 50),
+                      agent_attack_min=config['environment'].get('agent_attack_min', 25),
+                      agent_attack_max=config['environment'].get('agent_attack_max', 45),
                       hungry_decay=config['environment'].get('hungry_decay', 2),
                       observation_range=config['environment'].get('observation_range', 4),
-                      threat_perception_range=config['environment'].get('threat_perception_range', 2))
+                      threat_perception_range=config['environment'].get('threat_perception_range', 3),
+                      num_caves=config['environment'].get('num_caves', 5),
+                      cave_health_recovery=config['environment'].get('cave_health_recovery', 2),
+                      hungry_health_penalty=config['environment'].get('hungry_health_penalty', 2))
         
         agent = DQNAgent(
             state_shape=env.observation_space.shape,

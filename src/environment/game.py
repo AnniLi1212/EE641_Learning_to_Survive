@@ -10,7 +10,7 @@ class SurvivalGameEnv(gym.Env):
                  num_food=10, num_threats=5, 
                  food_value_min=10, food_value_max=30,
                  threat_attack_min=20, threat_attack_max=40,
-                 agent_attack_min=30, agent_attack_max=50,
+                 agent_attack_min=25, agent_attack_max=45,
                  hungry_decay=2, observation_range=4, threat_perception_range=2,
                  num_caves=5, cave_health_recovery=2, hungry_health_penalty=3):
         super().__init__()
@@ -48,11 +48,8 @@ class SurvivalGameEnv(gym.Env):
         obs_size = 2 * self.observation_range + 1
         self.observation_space = spaces.Box(
             low=np.array([
-                # grid channels (one-hot, 6 channels)
-                [[0 for _ in range(obs_size)] for _ in range(obs_size)],  # empty
+                # one-hot grid category channels
                 [[0 for _ in range(obs_size)] for _ in range(obs_size)],  # wall
-                [[0 for _ in range(obs_size)] for _ in range(obs_size)],  # food
-                [[0 for _ in range(obs_size)] for _ in range(obs_size)],  # threat
                 [[0 for _ in range(obs_size)] for _ in range(obs_size)],  # agent
                 [[0 for _ in range(obs_size)] for _ in range(obs_size)],  # cave
                 # food values channel
@@ -61,11 +58,8 @@ class SurvivalGameEnv(gym.Env):
                 [[0 for _ in range(obs_size)] for _ in range(obs_size)]
             ], dtype=np.float32),
             high=np.array([
-                # grid channels (one-hot, 6 channels)
-                [[1 for _ in range(obs_size)] for _ in range(obs_size)],  # empty
+                # one-hot grid category channels
                 [[1 for _ in range(obs_size)] for _ in range(obs_size)],  # wall
-                [[1 for _ in range(obs_size)] for _ in range(obs_size)],  # food
-                [[1 for _ in range(obs_size)] for _ in range(obs_size)],  # threat
                 [[1 for _ in range(obs_size)] for _ in range(obs_size)],  # agent
                 [[1 for _ in range(obs_size)] for _ in range(obs_size)],  # cave
                 # food values channel
@@ -106,19 +100,12 @@ class SurvivalGameEnv(gym.Env):
         # actual environment
         for i in range(self.size):
             for j in range(self.size):
-                cell_content = 0
                 if 1 in self.grid[i,j]:  # wall
-                    cell_content = 1
-                elif 2 in self.grid[i,j]:  # food
-                    cell_content = 2
-                elif 3 in self.grid[i,j]:  # threat
-                    cell_content = 3
+                    padded_grid[i + obs_range, j + obs_range] = 1
                 elif 4 in self.grid[i,j]:  # agent
-                    cell_content = 4
+                    padded_grid[i + obs_range, j + obs_range] = 2
                 elif 5 in self.grid[i,j]:  # cave
-                    cell_content = 5
-                
-                padded_grid[i + obs_range, j + obs_range] = cell_content
+                    padded_grid[i + obs_range, j + obs_range] = 3
         
         # fill food and threat values
         for pos, value in self.food_values.items():
@@ -148,15 +135,15 @@ class SurvivalGameEnv(gym.Env):
         
         # create one-hot encoded grid
         obs_size = 2 * obs_range + 1
-        one_hot_grid = np.zeros((6, obs_size, obs_size), dtype=np.float32)
-        for i in range(6):  # 6 categories: empty(0), wall(1), food(2), threat(3), agent(4), cave(5)
-            one_hot_grid[i] = (grid_window == i).astype(np.float32)
+        one_hot_grid = np.zeros((3, obs_size, obs_size), dtype=np.float32)
+        for i in range(3):  # 3 categories: wall,agent,cave
+            one_hot_grid[i] = (grid_window == i+1).astype(np.float32)
         
         # stack all channels
         observation = np.concatenate([
-            one_hot_grid,  # [6, obs_size, obs_size]
-            food_window[np.newaxis, :, :],  # [1, obs_size, obs_size]
-            threat_window[np.newaxis, :, :]  # [1, obs_size, obs_size]
+            one_hot_grid,
+            food_window[np.newaxis, :, :],
+            threat_window[np.newaxis, :, :]
         ], axis=0)
         
         return observation
@@ -178,7 +165,16 @@ class SurvivalGameEnv(gym.Env):
         self.threat_positions = {}
         self.threat_attacks = {}
         self.cave_positions = set()
-        self.action_records = {"Stay": 0, "Move": 0, "Eat Food": 0, "Fight": 0, "Enter Cave": 0}
+        self.action_records = {
+            "Stay": 0, 
+            "Move": 0, 
+            "Eat Food, Hungry < 50": 0, 
+            "Eat Food, Hungry >= 50": 0, 
+            "Fight Stronger Threat": 0, 
+            "Fight Weaker Threat": 0,
+            "Enter Cave, Health < 100": 0,
+            "Enter Cave, Health >= 100": 0
+        }
 
         self.grid = np.empty((self.size, self.size), dtype=object)
         for i in range(self.size):
@@ -367,9 +363,9 @@ class SurvivalGameEnv(gym.Env):
         if 1 not in self.grid[new_pos]:
             # if move into a threat, attack
             if 3 in self.grid[new_pos]:
-                self.action_records["Fight"] += 1
                 threat_attack = self.threat_attacks.get(new_pos, self.threat_attack_min)
                 if self.attack >= threat_attack: # agent wins
+                    self.action_records["Fight Weaker Threat"] += 1
                     self.hunger = min(100, self.hunger + threat_attack)
                     self.grid[new_pos].discard(3)
                     self.grid[new_pos].add(4)
@@ -382,12 +378,17 @@ class SurvivalGameEnv(gym.Env):
                     moved = True
                 else:
                     # agent loses health
-                    self.health = max(0, self.health - threat_attack // 2)
+                    self.action_records["Fight Stronger Threat"] += 1
+                    attack_diff = threat_attack - self.attack
+                    self.health = max(0, self.health - attack_diff)
                     moved = False
             else:
                 moved = True
                 if self._previous_position in self.cave_positions:
-                    self.action_records["Enter Cave"] += 1
+                    if self.health < 100:
+                        self.action_records["Enter Cave, Health < 100"] += 1
+                    else:
+                        self.action_records["Enter Cave, Health >= 100"] += 1
                     self.grid[self._previous_position].discard(4)
                     self.grid[self._previous_position].add(5)
                 else:
@@ -396,7 +397,10 @@ class SurvivalGameEnv(gym.Env):
                 
                 # food collection
                 if 2 in self.grid[new_pos]:
-                    self.action_records["Eat Food"] += 1
+                    if self.hunger < 50:
+                        self.action_records["Eat Food, Hungry < 50"] += 1
+                    else:
+                        self.action_records["Eat Food, Hungry >= 50"] += 1
                     food_value = self.food_values.get(new_pos, self.food_value_min)
                     self.hunger = min(100, self.hunger + food_value)
                     self.grid[new_pos].discard(2)
@@ -412,7 +416,6 @@ class SurvivalGameEnv(gym.Env):
 
             self.grid[self.agent_position].add(4)
 
-        # Always move threats, regardless of whether agent moved
         self._move_threats()
 
         if self.agent_position in self.cave_positions:
@@ -447,25 +450,37 @@ class SurvivalGameEnv(gym.Env):
 
     def _calculate_reward(self):
         reward = 0.0
+        reward += 0.1 # staying alive
         
-        # health
-        reward -= (100.0 - self.health) / 10.0
-        if self.health < 30:
-            reward -= 2.0
-        if self.health > 80:
-            reward += 2.0
-        if self.health <= 0:
-            reward -= 50.0
+        # reach max steps
+        if self.current_step >= self.max_steps:
+            reward += 10.0
 
-        # eat food
+        # health
+        if self.health - self._previous_health > 0:
+            reward += 1
+        elif self.health - self._previous_health < 0:
+            reward -= 0.5
+        if self.health < 30:
+            reward -= 0.5
+        if self.health >= 70:
+            reward += 0.5
+        if self.health <= 0:
+            reward -= 10.0
+
+        # eat food, value related
         if self.hunger > self._previous_hunger:
-            reward += 1.0
+            reward += 2.0 * (self.hunger - self._previous_hunger) / 100.0
         
         # beat threats
         if self.grid[self._previous_position] == 3 and self.health > self._previous_health:
             reward += 2.0
-        elif self.health < self._previous_health:
-            reward -= 1.0
+        # elif self.health < self._previous_health:
+        #     reward -= 2.0
+
+        # cave
+        if self._previous_position in self.cave_positions and self.health < 100:
+            reward += 0.5
         
         # # staying near walls
         # if (self.agent_position[0] in [0, self.size-1] or 

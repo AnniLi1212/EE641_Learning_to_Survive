@@ -9,7 +9,10 @@ import matplotlib.pyplot as plt
 from tqdm import tqdm
 from src import SurvivalGameEnv, DQNAgent, RandomAgent
 import argparse
-from src.train import load_config
+
+def load_config(config_path):
+    with open(config_path, 'r') as f:
+        return yaml.safe_load(f)
 
 def create_agent(config, env, model_path=None):
     agent_type = config['agent']['type']
@@ -24,14 +27,40 @@ def create_agent(config, env, model_path=None):
     elif agent_type == "random":
         agent = RandomAgent(
             state_shape=env.observation_space.shape,
-            action_space=env.action_space
+            action_space=env.action_space,
+            config=config
         )
     else:
         raise ValueError(f"Unknown agent type: {agent_type}")
     return agent
 
-def evaluate_episode(env, agent, render=False):
+def evaluate_episode(env, agent, baseline_agent=None, random_agent=None, render=False):
+    initial_seed = env.np_random.bit_generator.state
+    episode_data = run_episode(env, agent, render)
+
+    if baseline_agent:
+        env.np_random.bit_generator.state = initial_seed
+        baseline_data = run_episode(env, baseline_agent, False)
+        episode_data['baseline_reward'] = baseline_data['reward']
+        episode_data['baseline_action_records'] = baseline_data['action_records']
+
+        initial_state = env.reset()[0]  # Reset to get initial state
+        initial_info = env.unwrapped._get_info()
+        episode_data['q_value_diff'] = compute_q_value_diff(
+            agent, baseline_agent, initial_state, initial_info)
+
+    # random agent
+    if random_agent:
+        env.np_random.bit_generator.state = initial_seed
+        random_data = run_episode(env, random_agent, False)
+        episode_data['random_reward'] = random_data['reward']
+        episode_data['random_action_records'] = random_data['action_records']
+    
+    return episode_data
+
+def run_episode(env, agent, render=False):
     state, info = env.reset()
+    agent.reset()
     done = False
     truncated = False
     total_reward = 0
@@ -70,6 +99,24 @@ def evaluate_episode(env, agent, render=False):
         'action_records': info.get('action_records', {})
     }
 
+def compute_q_value_diff(agent, baseline_agent, state, info):
+    if agent is None or baseline_agent is None:
+        return 0.0
+    
+    try:
+        agent_q_values = agent.get_q_values(state, info)
+        baseline_q_values = baseline_agent.get_q_values(state, info)
+        
+        if agent_q_values is None or baseline_q_values is None:
+            return 0.0
+            
+        q_diff = (agent_q_values - baseline_q_values).mean().item()
+        return float(q_diff)
+        
+    except Exception as e:
+        print(f"Warning: Failed to compute Q-value difference: {str(e)}")
+        return 0.0
+    
 def analyze_results(results, save_dir):
     rewards = [r['reward'] for r in results]
     lengths = [r['length'] for r in results]
@@ -129,8 +176,49 @@ def analyze_results(results, save_dir):
     
     return stats
 
+def compute_statistics(rewards, lengths, healths, baseline_rewards=None, random_rewards=None):
+    stats = {
+        'num_episodes': len(rewards),
+        'reward': {
+            'mean': float(np.mean(rewards)),
+            'std': float(np.std(rewards)),
+            'min': float(np.min(rewards)),
+            'max': float(np.max(rewards))
+        },
+        'length': {
+            'mean': float(np.mean(lengths)),
+            'std': float(np.std(lengths)),
+            'min': float(np.min(lengths)),
+            'max': float(np.max(lengths))
+        },
+        'health': {
+            'mean': float(np.mean(healths)),
+            'std': float(np.std(healths)),
+            'min': float(np.min(healths)),
+            'max': float(np.max(healths))
+        }
+    }
+    
+    if baseline_rewards:
+        stats['baseline_reward'] = {
+            'mean': float(np.mean(baseline_rewards)),
+            'std': float(np.std(baseline_rewards)),
+            'min': float(np.min(baseline_rewards)),
+            'max': float(np.max(baseline_rewards))
+        }
+    
+    if random_rewards:
+        stats['random_reward'] = {
+            'mean': float(np.mean(random_rewards)),
+            'std': float(np.std(random_rewards)),
+            'min': float(np.min(random_rewards)),
+            'max': float(np.max(random_rewards))
+        }
+    
+    return stats
+
 # evaluate a trained agent
-def evaluate(config_path, model_path, num_episodes=100, render=False, save_dir=None):
+def evaluate(config_path, model_path, baseline_path=None, num_episodes=100, render=False, save_dir=None):
     config = load_config(config_path)
     grid_size = config['environment'].get('size', 16)
     
@@ -144,88 +232,100 @@ def evaluate(config_path, model_path, num_episodes=100, render=False, save_dir=N
                   food_value_max=config['environment'].get('food_value_max', 30),
                   threat_attack_min=config['environment'].get('threat_attack_min', 20),
                   threat_attack_max=config['environment'].get('threat_attack_max', 40),
-                  agent_attack_min=config['environment'].get('agent_attack_min', 30),
-                  agent_attack_max=config['environment'].get('agent_attack_max', 50),
+                  agent_attack_min=config['environment'].get('agent_attack_min', 25),
+                  agent_attack_max=config['environment'].get('agent_attack_max',45),
                   hungry_decay=config['environment'].get('hungry_decay', 2),
                   observation_range=config['environment'].get('observation_range', 4),
                   threat_perception_range=config['environment'].get('threat_perception_range', 2),
-                  num_caves=config['environment'].get('num_caves', 2),
-                  cave_health_recovery=config['environment'].get('cave_health_recovery', 8))
+                  num_caves=config['environment'].get('num_caves', 5),
+                  cave_health_recovery=config['environment'].get('cave_health_recovery', 2),
+                  hungry_health_penalty=config['environment'].get('hungry_health_penalty', 2))
     
     agent = create_agent(config, env, model_path)
+    baseline_agent = None
+    if baseline_path and os.path.exists(baseline_path):
+        print(f"Loading baseline model from {baseline_path}")
+        baseline_agent = DQNAgent(
+            state_shape=env.observation_space.shape,
+            action_space=env.action_space,
+            config=config['agent']
+        )
+        baseline_agent.load(baseline_path)
+    else:
+        print("No baseline model provided or file not found")
+
+    random_agent = RandomAgent(
+        state_shape=env.observation_space.shape,
+        action_space=env.action_space,
+        config=config
+    )
     
     print(f"Evaluating agent for {num_episodes} episodes...")
     results = []
     rewards = []
     lengths = []
     healths = []
+    baseline_rewards = []
+    random_rewards = []
+    q_value_diffs = []
     
-    for _ in tqdm(range(num_episodes)):
-        episode_data = evaluate_episode(env, agent, render)
+    for episode in tqdm(range(num_episodes)):
+        episode_data = evaluate_episode(env, agent, baseline_agent, random_agent, render)
+        
+        # print(f"\nEpisode {episode} summary:")
+        # print(f"Trained agent reward: {episode_data['reward']}")
+        # print(f"Trained agent actions: {episode_data['action_records']}")
+        # if baseline_agent:
+        #     print(f"Baseline agent reward: {episode_data['baseline_reward']}")
+        #     print(f"Baseline agent actions: {episode_data['baseline_action_records']}")
+        # if random_agent:
+        #     print(f"Random agent reward: {episode_data['random_reward']}")
+        #     print(f"Random agent actions: {episode_data['random_action_records']}")
+        
         results.append(episode_data)
         rewards.append(episode_data['reward'])
         lengths.append(episode_data['length'])
         healths.append(episode_data['final_health'])
-    
-    stats = {
-        'reward': {
-            'mean': float(np.mean(rewards)),
-            'std': float(np.std(rewards)),
-            'min': float(np.min(rewards)),
-            'max': float(np.max(rewards))
-        },
-        'length': {
-            'mean': float(np.mean(lengths)),
-            'std': float(np.std(lengths)),
-            'min': int(np.min(lengths)),
-            'max': int(np.max(lengths))
-        },
-        'health': {
-            'mean': float(np.mean(healths)),
-            'std': float(np.std(healths)),
-            'min': float(np.min(healths)),
-            'max': float(np.max(healths))
-        }
-    }
-    
-    results_native = []
-    for r in results:
-        results_native.append({
-            'reward': float(r['reward']),
-            'length': int(r['length']),
-            'final_health': float(r['final_health']),
-            'actions': [int(a) for a in r['actions']],
-            'states': r['states'],
-            'infos': r['infos'],
-            'action_records': r['action_records']
-        })
-    
-    results_file = os.path.join(save_dir, 'evaluation_results.json')
-    with open(results_file, 'w') as f:
-        json.dump({
-            'config': config,
-            'model_path': model_path,
-            'num_episodes': num_episodes,
-            'statistics': stats,
-            'results': results_native
-        }, f, indent=4)
-    
-    print("\nEvaluation Results:")
-    print(f"Number of episodes: {num_episodes}")
-    print(f"\nReward Statistics:")
-    print(f"  Mean: {stats['reward']['mean']:.2f} ± {stats['reward']['std']:.2f}")
-    print(f"  Range: [{stats['reward']['min']:.2f}, {stats['reward']['max']:.2f}]")
-    print(f"\nEpisode Length Statistics:")
-    print(f"  Mean: {stats['length']['mean']:.2f} ± {stats['length']['std']:.2f}")
-    print(f"  Range: [{stats['length']['min']}, {stats['length']['max']}]")
-    print(f"\nHealth Statistics:")
-    print(f"  Mean: {stats['health']['mean']:.2f} ± {stats['health']['std']:.2f}")
-    print(f"  Range: [{stats['health']['min']:.2f}, {stats['health']['max']:.2f}]")
-    print(f"\nEval results saved to: {save_dir}")
-    
-    env.close()
-    return stats
+        if baseline_agent:
+            baseline_rewards.append(episode_data['baseline_reward'])
+            q_value_diffs.append(episode_data['q_value_diff'])
+        if random_agent:
+            random_rewards.append(episode_data['random_reward'])
+        
+    if save_dir:
+        os.makedirs(save_dir, exist_ok=True)
+        results_file = os.path.join(save_dir, 'evaluation_results.json')
 
+        results_native = []
+        for r in results:
+            result_dict = {
+                'reward': float(r['reward']),
+                'length': int(r['length']),
+                'final_health': float(r['final_health']),
+                'actions': [int(a) for a in r['actions']],
+                'action_records': r['action_records'],
+                'states': r['states'],
+                'infos': r['infos']
+            }
+            if baseline_agent:
+                result_dict['baseline_reward'] = float(r['baseline_reward'])
+                result_dict['baseline_action_records'] = r['baseline_action_records']
+                result_dict['q_value_diff'] = float(r['q_value_diff'])
+            if random_agent:
+                result_dict['random_reward'] = float(r['random_reward'])
+                result_dict['random_action_records'] = r['random_action_records']
+            results_native.append(result_dict)
+        
+        with open(results_file, 'w') as f:
+            json.dump({
+                'config': config,
+                'model_path': model_path,
+                'num_episodes': num_episodes,
+                'statistics': compute_statistics(rewards, lengths, healths, baseline_rewards, random_rewards),
+                'results': results_native
+            }, f, indent=4)
+    
+    return compute_statistics(rewards, lengths, healths, baseline_rewards, random_rewards)
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
@@ -233,6 +333,8 @@ if __name__ == "__main__":
                       help='Path to config file')
     parser.add_argument('--model', type=str, required=True,
                       help='Path to model file')
+    parser.add_argument('--baseline', type=str, default=None,
+                      help='Path to baseline model file')
     parser.add_argument('--episodes', type=int, default=None,
                       help='Number of episodes to evaluate')
     parser.add_argument('--render', action='store_true',
@@ -241,4 +343,4 @@ if __name__ == "__main__":
                       help='Directory to save evaluation results')
     args = parser.parse_args()
     
-    evaluate(args.config, args.model, args.episodes, args.render, args.save_dir)
+    evaluate(args.config, args.model, args.baseline, args.episodes, args.render, args.save_dir)

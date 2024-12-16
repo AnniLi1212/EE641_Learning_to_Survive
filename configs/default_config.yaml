@@ -3,43 +3,45 @@ environment:
   render_mode: "human"
   max_steps: 1000 # max steps per episode
   size: 16 # grid size
-  num_food: 10
-  num_threats: 5
-  food_value_min: 10
-  food_value_max: 30
-  threat_attack_min: 20
-  threat_attack_max: 40
-  agent_attack_min: 25
-  agent_attack_max: 45
-  hungry_decay: 4
-  observation_range: 4
-  threat_perception_range: 3
-  num_caves: 5
-  cave_health_recovery: 2
-  hungry_health_penalty: 3
+  num_food: 10 # number of food
+  num_threats: 5 # number of threats
+  food_value_min: 10 # minimum food value
+  food_value_max: 30 # maximum food value
+  threat_attack_min: 20 # minimum threat attack
+  threat_attack_max: 40 # maximum threat attack
+  agent_attack_min: 25 # minimum agent attack
+  agent_attack_max: 45 # maximum agent attack
+  hungry_decay: 2 # hunger decay each step
+  observation_range: 4 # observation range of agent
+  threat_perception_range: 3 # observation range of threats
+  num_caves: 5 # number of caves
+  cave_health_recovery: 2 # health recovery in cave each step
+  hungry_health_penalty: 2 # health penalty when hungry < 20
 
 agent:
   type: "dqn" # "dqn", "random"
-  memory_size: 100000 # replay buffer size
+  memory_size: 500000 # replay buffer size
   batch_size: 128
   gamma: 0.99
   epsilon_start: 1.0
   epsilon_end: 0.05
-  epsilon_decay: 0.997
-  learning_rate: 0.00003
-  target_update: 10 # update target network every x episodes
-  hidden_sizes: [512, 256, 128]
+  epsilon_decay: 0.998
+  learning_rate: 0.0001
+  target_update: 50 # update target network every x episodes
+  hidden_sizes: [256, 128] # for FC
+  rnn_hidden_size: 128 # None if not using RNN
+  sequence_length: 8 # None if not using sequence
 
 training:
-  max_episodes: 500
-  eval_frequency: 10
-  eval_episodes: 50 # num of episodes for eval
+  max_episodes: 1000
+  eval_frequency: 20
+  eval_episodes: 100 # num of episodes for each eval
   save_frequency: 10
-  patience: 50 # early stopping
+  patience: 100 # early stopping
   checkpoint_dir: "results/checkpoints"
   log_dir: "results/logs"
 
 evaluation:
-  num_episodes: 50
+  num_episodes: 100
   render: true
   save_dir: "results/evaluation"
