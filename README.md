@@ -1,6 +1,6 @@
 # EE641_Learning_to_Survive
 Learning to Survive: Organism Evolution in a Simulated Ecosystem Using Reinforcement Learning
-![Uploading survivalgameimg.png…]()
+<img width="899" alt="survivalgameimg" src="https://github.com/user-attachments/assets/92e44aca-f278-4673-9f0b-8cf1112b1c6f" />
 
 ## Survival Game Environment
 
